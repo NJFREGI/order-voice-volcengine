@@ -1,63 +1,37 @@
-# NJF 订货系统 v19 - 火山引擎语音订货版
+[README_volcengine.md](https://github.com/user-attachments/files/27226669/README_volcengine.md)
+# NJF 订货系统 v20 - 火山引擎流式 ASR 真实识别版
 
-## 这版包含
+v20 不再需要公网音频 URL。流程为：手机按住说话 → 前端生成 16k 单声道 WAV → 上传到 Vercel `/api/transcribe-volc` → 后端通过 WebSocket 调用火山引擎流式语音识别 → 返回文字 → 前端匹配商品。
 
-- `index.html`：完整前端页面，语音订货按钮为“按住说话，松开识别”。
-- `api/transcribe-volc.js`：Vercel 后端接口，不在前端暴露 Key。
-- `vercel.json`：Vercel 部署配置。
-- `.env.example`：环境变量示例。
+## Vercel 环境变量
 
-## 重要说明
-
-火山引擎大模型录音文件识别 AUC 的标准接口通常是：
-
-1. 提交任务：`https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit`
-2. 查询结果：`https://openspeech.bytedance.com/api/v3/auc/bigmodel/query`
-
-AUC 方式需要音频文件的公网 URL。因此这个后端提供三种方式：
-
-### 方式 A：先用 Mock 测试前端
-
-在 Vercel 环境变量里设置：
+真实识别时，请删除或留空：
 
 ```env
-VOLCENGINE_MOCK_TEXT=干豆腐三袋，鸡腿肉两包，豆腐皮一份
+VOLCENGINE_MOCK_TEXT
 ```
 
-### 方式 B：使用自己的 ASR Proxy
-
-如果你已经有一个火山引擎 ASR 后端接口，可以设置：
+添加：
 
 ```env
-VOLCENGINE_ASR_PROXY_URL=https://your-asr-proxy.example.com/transcribe
+VOLCENGINE_ASR_APP_ID=火山引擎 APP ID
+VOLCENGINE_ASR_ACCESS_TOKEN=火山引擎 Access Token
+VOLCENGINE_ASR_SECRET_KEY=火山引擎 Secret Key（当前代码暂不使用，但建议保存）
+VOLCENGINE_ASR_RESOURCE_ID=volc.bigasr.sauc.duration
+VOLCENGINE_ASR_WS_URL=wss://openspeech.bytedance.com/api/v3/sauc/bigmodel
 ```
 
-前端录音文件会转发到这个 Proxy。
-
-### 方式 C：上传音频到公网 URL 后调用火山 AUC
-
-你需要准备一个上传接口，返回：
-
-```json
-{"url":"https://example.com/audio.webm"}
-```
-
-然后在 Vercel 设置：
+如果你的服务是“豆包流式语音识别模型2.0-小时版”，可以把资源 ID 改成：
 
 ```env
-VOLCENGINE_AUDIO_UPLOAD_URL=https://your-upload-service.example.com/upload
-VOLCENGINE_APP_KEY=你的APP ID
-VOLCENGINE_ACCESS_KEY=你的Access Token
-VOLCENGINE_RESOURCE_ID=volc.bigasr.auc
+VOLCENGINE_ASR_RESOURCE_ID=volc.seedasr.sauc.duration
 ```
 
-## 前端 API 地址
+保存环境变量后，必须重新部署：Deployments → 最新部署右侧 `...` → Redeploy。
 
-部署 Vercel 后，前端语音弹窗里的 API 地址填：
+## 重要
 
-```text
-https://你的项目.vercel.app/api/transcribe-volc
-```
-
-如果 `index.html` 也部署在同一个 Vercel 项目，默认 `/api/transcribe-volc` 即可。
-
+- `index.html`、`vercel.json`、`package.json`、`api/` 必须在 GitHub 仓库最外层。
+- API Key 不要写进 HTML。
+- 浏览器必须用 HTTPS 才能录音。
+- 若失败，请查看 Vercel → Logs 中 `/api/transcribe-volc` 的错误。
