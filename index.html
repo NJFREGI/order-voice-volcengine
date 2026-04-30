@@ -2633,8 +2633,7 @@ document.addEventListener('focusin',function(e){
         idx=text.indexOf(item.alias,e);
       }
     }
-    const parts=text.split(/[，,、。\.
-；;和と]/).map(x=>x.trim()).filter(Boolean);
+    const parts=text.split(/[，,、。\.；;和と\n]/).map(x=>x.trim()).filter(Boolean);
     parts.forEach(part=>{
       const ps=text.indexOf(part);const pe=ps>=0?ps+part.length:-1;
       if(ps>=0&&overlaps(ps,pe))return;
