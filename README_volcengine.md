@@ -1,4 +1,4 @@
-[README_volcengine.md](https://github.com/user-attachments/files/27226669/README_volcengine.md)
+[README_volcengine.md](https://github.com/user-attachments/files/27244258/README_volcengine.md)
 # NJF 订货系统 v20 - 火山引擎流式 ASR 真实识别版
 
 v20 不再需要公网音频 URL。流程为：手机按住说话 → 前端生成 16k 单声道 WAV → 上传到 Vercel `/api/transcribe-volc` → 后端通过 WebSocket 调用火山引擎流式语音识别 → 返回文字 → 前端匹配商品。
