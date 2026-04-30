@@ -1,7 +1,0 @@
-{
-  "functions": {
-    "api/transcribe-volc.js": {
-      "maxDuration": 60
-    }
-  }
-}
