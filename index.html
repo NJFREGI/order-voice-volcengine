@@ -859,7 +859,7 @@ body{letter-spacing:.01em;background:#f7f8fa;}
 
 
 
-/* ===== V18 火山引擎 ASR 语音订货：按住说话 + 删除候选 ===== */
+/* ===== V18 火山引擎流式 ASR 语音订货：按住说话 + 删除候选 ===== */
 .voice-api-config{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin-top:10px;}
 .voice-api-input{width:100%;border:1.5px solid #dbe3ec;border-radius:12px;padding:10px 12px;font-size:12px;font-family:inherit;background:#fff;color:#334155;}
 .voice-api-input:focus{outline:none;border-color:var(--red);box-shadow:0 0 0 4px rgba(37,99,235,.08);}
@@ -1274,12 +1274,12 @@ body{letter-spacing:.01em;background:#f7f8fa;}
 <div class="modal-overlay" id="modalVoiceOrder">
   <div class="modal modal-lg">
     <div class="modal-header">
-      <div class="modal-title">🎙 <span class="ja">音声注文</span><span class="zh">语音订货</span><span class="voice-provider-badge">火山引擎 ASR</span></div>
+      <div class="modal-title">🎙 <span class="ja">音声注文</span><span class="zh">语音订货</span><span class="voice-provider-badge">火山引擎流式 ASR</span></div>
       <button class="modal-close" onclick="closeVoiceOrderModal()">✕</button>
     </div>
     <div class="voice-panel">
       <textarea class="voice-main-text" id="voiceText" placeholder="例：干豆腐三袋、鶏もも肉2パック、豆腐皮一份"></textarea>
-      <div class="voice-status" id="voiceStatus"><span class="ja">下のボタンを押しながら話し、離すと火山引擎 ASRで文字化します。</span><span class="zh">按住下面按钮说话，松开后使用 火山引擎 ASR 识别文字。</span></div>
+      <div class="voice-status" id="voiceStatus"><span class="ja">下のボタンを押しながら話し、離すと火山引擎流式 ASRで文字化します。</span><span class="zh">按住下面按钮说话，松开后使用 火山引擎流式 ASR 识别文字。</span></div>
 
       <div class="voice-hold-wrap">
         <button type="button" class="voice-hold-btn" id="voiceHoldBtn">🎙 <span class="ja">押しながら話す</span><span class="zh">按住说话</span></button>
@@ -1297,8 +1297,8 @@ body{letter-spacing:.01em;background:#f7f8fa;}
         <button type="button" class="btn btn-outline btn-sm" onclick="saveVoiceApiEndpoint()"><span class="ja">API保存</span><span class="zh">保存API</span></button>
       </div>
       <div class="voice-help-text">
-        <span class="ja">※ 火山引擎 ASRキーはHTMLに入れず、サーバー側 /api/transcribe-volc に保存してください。</span>
-        <span class="zh">※ 火山引擎 ASR Key 不要写在 HTML 里，请放在服务器 /api/transcribe-volc 里。</span>
+        <span class="ja">※ 火山引擎流式 ASRキーはHTMLに入れず、サーバー側 /api/transcribe-volc に保存してください。</span>
+        <span class="zh">※ 火山引擎流式 ASR Key 不要写在 HTML 里，请放在服务器 /api/transcribe-volc 里。</span>
       </div>
 
       <div class="voice-action-row">
@@ -2580,7 +2580,7 @@ document.addEventListener('focusin',function(e){
 
 
 
-/* ===== V18 火山引擎 ASR 音声注文 / 语音订货：按住说话版 ===== */
+/* ===== V18 火山引擎流式 ASR 音声注文 / 语音订货：按住说话版 ===== */
 (function(){
   let voiceParsedItems=[];
   let mediaRecorder=null;
@@ -2589,6 +2589,11 @@ document.addEventListener('focusin',function(e){
   let voiceRecording=false;
   let voiceRecordStart=0;
   let voiceTimerId=null;
+  let voiceAudioContext=null;
+  let voiceProcessor=null;
+  let voiceSource=null;
+  let voicePcmChunks=[];
+  let voiceInputSampleRate=16000;
 
   function V$(id){return document.getElementById(id);}
   function vSafe(x){return String(x??'').replace(/[&<>"']/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];});}
@@ -2604,20 +2609,57 @@ document.addEventListener('focusin',function(e){
   function productAliases(p){const arr=[];[p.name,p.name_zh,p.spec].forEach(x=>{if(x)arr.push(String(x));});const zh=String(p.name_zh||'');const ja=String(p.name||'');if(/鶏もも|鸡腿|雞腿|もも肉/.test(zh+ja))arr.push('鸡腿肉','雞腿肉','鸡肉腿','鸡腿','もも肉','鶏もも');if(/干豆腐|乾豆腐/.test(zh+ja))arr.push('干豆腐','乾豆腐','豆腐干');if(/豆腐皮/.test(zh+ja))arr.push('豆皮','豆腐皮');if(/ジャガイモ|土豆|じゃがいも/.test(zh+ja))arr.push('土豆','马铃薯','馬鈴薯','ジャガイモ','じゃがいも');if(/キャベツ|卷心菜|高丽菜|高麗菜/.test(zh+ja))arr.push('卷心菜','高丽菜','高麗菜','キャベツ');return [...new Set(arr.filter(Boolean))].sort((a,b)=>String(b).length-String(a).length);}
   function findCandidates(raw){const text=vNorm(raw);const scored=[];(allProducts||[]).forEach(p=>{if(!p.active||Number(p.stock)<=0)return;let score=0;for(const a of productAliases(p)){const na=vNorm(a);if(!na)continue;if(text.includes(na))score=Math.max(score,100+na.length);else if(na.includes(text)&&text.length>=2)score=Math.max(score,70+text.length);}if(score>0)scored.push({product:p,score});});scored.sort((a,b)=>b.score-a.score);return scored.slice(0,6).map(x=>x.product);}
 
-  function parseVoiceText(text){text=String(text||'').trim();if(!text)return [];const results=[];const used=new Set();const products=(allProducts||[]).filter(p=>p.active&&Number(p.stock)>0);products.forEach(p=>{for(const alias of productAliases(p)){const rawAlias=String(alias||'').trim();if(!rawAlias)continue;const idx=text.indexOf(rawAlias);if(idx>=0){const key=String(p.id);if(used.has(key))break;used.add(key);const qty=getQtyAround(text,idx,idx+rawAlias.length);const candidates=findCandidates(rawAlias);results.push({raw:rawAlias,qty,product_id:p.id,candidates:candidates.length?candidates:[p]});break;}}});const parts=text.split(/[，,、。\.\n；;和と]/).map(x=>x.trim()).filter(Boolean);parts.forEach(part=>{const already=results.some(r=>part.includes(r.raw));if(already)return;const cleaned=part.replace(/(\d+|[零〇一二两兩三四五六七八九十]{1,3}|ひとつ|ふたつ|みっつ|よっつ|一つ|二つ|三つ|四つ|五つ|六つ|七つ|八つ|九つ|一個|二個|三個|四個|五個|六個|七個|八個|九個|十個)\s*(袋|包|份|个|個|盒|箱|本|枚|パック|ケース|kg|g|キロ|つ)?/ig,'').replace(/我要|我想要|ください|お願いします|を|が|の|買う|注文|订|要/g,'').trim();if(cleaned.length<2)return;const cand=findCandidates(cleaned);if(cand.length){const first=cand[0];if(results.some(r=>String(r.product_id)===String(first.id)))return;results.push({raw:part,qty:getQtyAround(part,0,cleaned.length),product_id:first.id,candidates:cand});}});return results;}
+  function parseVoiceText(text){
+    text=String(text||'').trim();
+    if(!text)return [];
+    const results=[];
+    const occupied=[];
+    const products=(allProducts||[]).filter(p=>p.active&&Number(p.stock)>0);
+    const aliasList=[];
+    products.forEach(p=>{productAliases(p).forEach(a=>{const raw=String(a||'').trim();if(raw.length>=2)aliasList.push({alias:raw,product:p});});});
+    aliasList.sort((a,b)=>String(b.alias).length-String(a.alias).length);
+    function overlaps(s,e){return occupied.some(r=>!(e<=r.s||s>=r.e));}
+    for(const item of aliasList){
+      let idx=text.indexOf(item.alias);
+      while(idx>=0){
+        const e=idx+item.alias.length;
+        if(!overlaps(idx,e)&&!results.some(r=>String(r.product_id)===String(item.product.id))){
+          occupied.push({s:idx,e});
+          const qty=getQtyAround(text,idx,e);
+          const candidates=findCandidates(item.alias);
+          results.push({raw:item.alias,qty,product_id:item.product.id,candidates:candidates.length?candidates:[item.product]});
+          break;
+        }
+        idx=text.indexOf(item.alias,e);
+      }
+    }
+    const parts=text.split(/[，,、。\.
+；;和と]/).map(x=>x.trim()).filter(Boolean);
+    parts.forEach(part=>{
+      const ps=text.indexOf(part);const pe=ps>=0?ps+part.length:-1;
+      if(ps>=0&&overlaps(ps,pe))return;
+      const cleaned=part.replace(/(\d+|[零〇一二两兩三四五六七八九十]{1,3}|ひとつ|ふたつ|みっつ|よっつ|一つ|二つ|三つ|四つ|五つ|六つ|七つ|八つ|九つ|一個|二個|三個|四個|五個|六個|七個|八個|九個|十個)\s*(袋|包|份|个|個|盒|箱|本|枚|パック|ケース|kg|g|キロ|つ)?/ig,'').replace(/我要|我想要|ください|お願いします|を|が|の|買う|注文|订|要/g,'').trim();
+      if(cleaned.length<2)return;
+      const cand=findCandidates(cleaned);
+      if(cand.length){const first=cand[0];if(results.some(r=>String(r.product_id)===String(first.id)))return;results.push({raw:part,qty:getQtyAround(part,0,cleaned.length),product_id:first.id,candidates:cand});}
+    });
+    return results;
+  }
 
   function renderVoiceResults(items){voiceParsedItems=items||[];const wrap=V$('voiceResultWrap');if(!wrap)return;if(!voiceParsedItems.length){wrap.innerHTML=`<div class="voice-empty">${vMsg('没有识别到可匹配的商品。可以修改文字后点击“解析文字”。','一致する商品が見つかりません。文字を修正して「文字から解析」を押してください。')}</div>`;return;}wrap.innerHTML=`<div class="voice-result-list">${voiceParsedItems.map((item,i)=>{const opts=(item.candidates||[]).map(p=>`<option value="${vSafe(p.id)}" ${String(p.id)===String(item.product_id)?'selected':''}>${vSafe(p.name)}${p.name_zh?' / '+vSafe(p.name_zh):''}　${fmt(p.price)}（税抜）</option>`).join('');return `<div class="voice-result-item"><div class="voice-result-main"><div class="voice-result-raw">${vMsg('识别','認識')}：${vSafe(item.raw)}</div><select class="voice-result-select" data-voice-index="${i}">${opts}</select></div><input class="voice-qty-input" data-voice-qty="${i}" type="number" min="1" step="1" value="${Number(item.qty||1)}"><button type="button" class="voice-delete-btn" onclick="removeVoiceItem(${i})" title="delete">×</button></div>`;}).join('')}</div>`;}
   function setVoiceStatus(msg,listening){const status=V$('voiceStatus');if(!status)return;status.classList.toggle('listening',!!listening);status.textContent=msg;}
   function getVoiceEndpoint(){const el=V$('voiceApiEndpoint');return (el?.value||'').trim()||localStorage.getItem('fos_voiceApiEndpoint')||'/api/transcribe-volc';}
   window.saveVoiceApiEndpoint=function(){const val=(V$('voiceApiEndpoint')?.value||'').trim();if(!val){alert(vMsg('请输入 API 地址，例如 /api/transcribe-volc','API URLを入力してください。例：/api/transcribe-volc'));return;}localStorage.setItem('fos_voiceApiEndpoint',val);alert(vMsg('已保存 API 地址','API URLを保存しました'));};
   function updateTimer(){const el=V$('voiceTimer');if(!el||!voiceRecording)return;const sec=Math.max(0,Math.floor((Date.now()-voiceRecordStart)/1000));el.textContent=vMsg(`录音中 ${sec} 秒，松开后识别`,`録音中 ${sec} 秒、離すと認識します`);}
-  async function startHoldRecording(e){if(e){e.preventDefault();e.stopPropagation();}if(voiceRecording)return;if(!window.isSecureContext&&location.protocol!=='https:'&&location.hostname!=='localhost'){setVoiceStatus(vMsg('录音需要 HTTPS，请用 https:// 页面打开。','録音にはHTTPSが必要です。https://で開いてください。'),false);return;}if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia||!window.MediaRecorder){setVoiceStatus(vMsg('这个浏览器不支持录音。请用新版 Chrome / Safari，或手动输入后解析。','このブラウザは録音に対応していません。Chrome/Safariでお試しください。'),false);return;}try{const endpoint=getVoiceEndpoint();if(location.hostname.includes('github.io')&&endpoint==='/api/transcribe-volc'){setVoiceStatus(vMsg('当前是 GitHub Pages，需要填写你的后端 API 地址，例如 https://xxx.vercel.app/api/transcribe-volc。','GitHub Pagesでは別のAPI URLが必要です。例：https://xxx.vercel.app/api/transcribe-volc'),false);return;}voiceStream=await navigator.mediaDevices.getUserMedia({audio:true});voiceChunks=[];const mime=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus':(MediaRecorder.isTypeSupported('audio/mp4')?'audio/mp4':'audio/webm');mediaRecorder=new MediaRecorder(voiceStream,{mimeType:mime});mediaRecorder.ondataavailable=function(ev){if(ev.data&&ev.data.size>0)voiceChunks.push(ev.data);};mediaRecorder.onstop=function(){finishHoldRecording(mime);};voiceRecording=true;voiceRecordStart=Date.now();const btn=V$('voiceHoldBtn');if(btn)btn.classList.add('recording');setVoiceStatus(vMsg('正在录音，请继续按住按钮说话。','録音中です。ボタンを押したまま話してください。'),true);updateTimer();voiceTimerId=setInterval(updateTimer,300);mediaRecorder.start();}catch(err){stopVoiceTracks();setVoiceStatus(vMsg('无法打开麦克风，请检查浏览器权限：','マイクを開けません。権限を確認してください：')+(err?.message||err),false);}}
-  function stopHoldRecording(e){if(e){e.preventDefault();e.stopPropagation();}if(!voiceRecording)return;voiceRecording=false;clearInterval(voiceTimerId);voiceTimerId=null;const btn=V$('voiceHoldBtn');if(btn)btn.classList.remove('recording');const duration=Date.now()-voiceRecordStart;if(mediaRecorder&&mediaRecorder.state!=='inactive'){if(duration<500){try{mediaRecorder.stop();}catch(_e){}stopVoiceTracks();setVoiceStatus(vMsg('录音太短，请按住后说完整商品和数量。','録音が短すぎます。押しながら商品と数量を話してください。'),false);return;}setVoiceStatus(vMsg('录音完成，正在用 火山引擎 ASR 识别...','録音完了。火山引擎 ASRで認識中...'),true);try{mediaRecorder.stop();}catch(e){setVoiceStatus(vMsg('停止录音失败：','録音停止に失敗しました：')+(e.message||e),false);stopVoiceTracks();}}}
-  function stopVoiceTracks(){if(voiceStream){voiceStream.getTracks().forEach(t=>t.stop());voiceStream=null;}}
-  async function finishHoldRecording(mime){stopVoiceTracks();const blob=new Blob(voiceChunks,{type:mime||'audio/webm'});voiceChunks=[];if(!blob.size){setVoiceStatus(vMsg('没有录到声音，请再试一次。','音声が録音されませんでした。もう一度お試しください。'),false);return;}try{const text=await transcribeWithEndpoint(blob,mime);const clean=String(text||'').trim();if(!clean){setVoiceStatus(vMsg('火山引擎 没有返回文字，请再说清楚一点。','火山引擎から文字が返りませんでした。もう一度はっきり話してください。'),false);return;}const textEl=V$('voiceText');if(textEl)textEl.value=clean;const items=parseVoiceText(clean);renderVoiceResults(items);setVoiceStatus(vMsg('识别完成：','認識完了：')+clean,false);}catch(err){setVoiceStatus(vMsg('火山引擎 识别失败：','火山引擎認識に失敗しました：')+(err?.message||err),false);}}
-  async function transcribeWithEndpoint(blob,mime){const endpoint=getVoiceEndpoint();const fd=new FormData();const ext=(mime||'').includes('mp4')?'m4a':'webm';fd.append('audio',blob,'voice_order.'+ext);fd.append('language',currentLang==='zh'?'zh':'ja');const names=(allProducts||[]).filter(p=>p.active).slice(0,120).map(p=>[p.name,p.name_zh].filter(Boolean).join('/')).join('、');fd.append('product_hint',names);const res=await fetch(endpoint,{method:'POST',body:fd});const txt=await res.text();let data=null;try{data=JSON.parse(txt);}catch(_e){data={text:txt};}if(!res.ok){throw new Error(data?.error||data?.message||txt||('HTTP '+res.status));}return data.text||data.transcript||'';}
+  function resampleFloat32(input,inRate,outRate){if(!input||!input.length)return new Float32Array(0);if(inRate===outRate)return input;const ratio=inRate/outRate;const newLen=Math.max(1,Math.round(input.length/ratio));const result=new Float32Array(newLen);let o=0,b=0;while(o<result.length){const nb=Math.round((o+1)*ratio);let acc=0,c=0;for(let i=b;i<nb&&i<input.length;i++){acc+=input[i];c++;}result[o]=c?acc/c:0;o++;b=nb;}return result;}
+  function encodeWavFromFloatChunks(chunks,inputRate,targetRate){const total=chunks.reduce((s,c)=>s+c.length,0);const merged=new Float32Array(total);let off=0;chunks.forEach(c=>{merged.set(c,off);off+=c.length;});const samples=resampleFloat32(merged,inputRate,targetRate);const buffer=new ArrayBuffer(44+samples.length*2);const view=new DataView(buffer);function ws(o,s){for(let i=0;i<s.length;i++)view.setUint8(o+i,s.charCodeAt(i));}ws(0,'RIFF');view.setUint32(4,36+samples.length*2,true);ws(8,'WAVE');ws(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);view.setUint32(24,targetRate,true);view.setUint32(28,targetRate*2,true);view.setUint16(32,2,true);view.setUint16(34,16,true);ws(36,'data');view.setUint32(40,samples.length*2,true);let p=44;for(let i=0;i<samples.length;i++,p+=2){let s=Math.max(-1,Math.min(1,samples[i]));view.setInt16(p,s<0?s*0x8000:s*0x7fff,true);}return new Blob([buffer],{type:'audio/wav'});}
+  async function startHoldRecording(e){if(e){e.preventDefault();e.stopPropagation();}if(voiceRecording)return;if(!window.isSecureContext&&location.protocol!=='https:'&&location.hostname!=='localhost'){setVoiceStatus(vMsg('录音需要 HTTPS，请用 https:// 页面打开。','録音にはHTTPSが必要です。https://で開いてください。'),false);return;}if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){setVoiceStatus(vMsg('这个浏览器不支持录音。请用新版 Chrome / Safari，或手动输入后解析。','このブラウザは録音に対応していません。Chrome/Safariでお試しください。'),false);return;}try{const endpoint=getVoiceEndpoint();if(location.hostname.includes('github.io')&&endpoint==='/api/transcribe-volc'){setVoiceStatus(vMsg('当前是 GitHub Pages，需要填写你的后端 API 地址，例如 https://xxx.vercel.app/api/transcribe-volc。','GitHub Pagesでは別のAPI URLが必要です。例：https://xxx.vercel.app/api/transcribe-volc'),false);return;}voiceStream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});const AudioContextClass=window.AudioContext||window.webkitAudioContext;voiceAudioContext=new AudioContextClass();voiceInputSampleRate=voiceAudioContext.sampleRate||16000;voicePcmChunks=[];voiceSource=voiceAudioContext.createMediaStreamSource(voiceStream);voiceProcessor=voiceAudioContext.createScriptProcessor(4096,1,1);voiceProcessor.onaudioprocess=function(ev){if(!voiceRecording)return;const input=ev.inputBuffer.getChannelData(0);voicePcmChunks.push(new Float32Array(input));};voiceSource.connect(voiceProcessor);voiceProcessor.connect(voiceAudioContext.destination);voiceRecording=true;voiceRecordStart=Date.now();const btn=V$('voiceHoldBtn');if(btn)btn.classList.add('recording');setVoiceStatus(vMsg('正在录音，请继续按住按钮说话。','録音中です。ボタンを押したまま話してください。'),true);updateTimer();voiceTimerId=setInterval(updateTimer,300);}catch(err){stopVoiceTracks();setVoiceStatus(vMsg('无法打开麦克风，请检查浏览器权限：','マイクを開けません。権限を確認してください：')+(err?.message||err),false);}}
+  function stopHoldRecording(e){if(e){e.preventDefault();e.stopPropagation();}if(!voiceRecording)return;const duration=Date.now()-voiceRecordStart;voiceRecording=false;clearInterval(voiceTimerId);voiceTimerId=null;const btn=V$('voiceHoldBtn');if(btn)btn.classList.remove('recording');if(duration<500){stopVoiceTracks();voicePcmChunks=[];setVoiceStatus(vMsg('录音太短，请按住后说完整商品和数量。','録音が短すぎます。押しながら商品と数量を話してください。'),false);return;}setVoiceStatus(vMsg('录音完成，正在用 火山引擎流式 ASR 识别...','録音完了。火山引擎ストリーミングASRで認識中...'),true);finishHoldRecording();}
+  function stopVoiceTracks(){try{if(voiceProcessor){voiceProcessor.disconnect();voiceProcessor=null;}}catch(_e){}try{if(voiceSource){voiceSource.disconnect();voiceSource=null;}}catch(_e){}try{if(voiceAudioContext){voiceAudioContext.close();voiceAudioContext=null;}}catch(_e){}if(voiceStream){voiceStream.getTracks().forEach(t=>t.stop());voiceStream=null;}}
+  async function finishHoldRecording(){const chunks=voicePcmChunks.slice();const inputRate=voiceInputSampleRate||16000;stopVoiceTracks();voicePcmChunks=[];if(!chunks.length){setVoiceStatus(vMsg('没有录到声音，请再试一次。','音声が録音されませんでした。もう一度お試しください。'),false);return;}const blob=encodeWavFromFloatChunks(chunks,inputRate,16000);try{const text=await transcribeWithEndpoint(blob,'audio/wav');const clean=String(text||'').trim();if(!clean){setVoiceStatus(vMsg('火山引擎没有返回文字，请再说清楚一点。','火山引擎から文字が返りませんでした。もう一度はっきり話してください。'),false);return;}const textEl=V$('voiceText');if(textEl)textEl.value=clean;const items=parseVoiceText(clean);renderVoiceResults(items);setVoiceStatus(vMsg('识别完成：','認識完了：')+clean,false);}catch(err){setVoiceStatus(vMsg('火山引擎识别失败：','火山引擎認識に失敗しました：')+(err?.message||err),false);}}
+  async function transcribeWithEndpoint(blob,mime){const endpoint=getVoiceEndpoint();const fd=new FormData();fd.append('audio',blob,'voice_order.wav');fd.append('audio_format','wav');fd.append('sample_rate','16000');fd.append('language',currentLang==='zh'?'zh':'ja');const names=(allProducts||[]).filter(p=>p.active).slice(0,120).map(p=>[p.name,p.name_zh].filter(Boolean).join('/')).join('、');fd.append('product_hint',names);const res=await fetch(endpoint,{method:'POST',body:fd});const txt=await res.text();let data=null;try{data=JSON.parse(txt);}catch(_e){data={text:txt};}if(!res.ok){throw new Error(data?.error||data?.message||txt||('HTTP '+res.status));}return data.text||data.transcript||'';}
   function bindHoldButton(){const btn=V$('voiceHoldBtn');if(!btn||btn.dataset.bound==='1')return;btn.dataset.bound='1';btn.addEventListener('pointerdown',startHoldRecording);btn.addEventListener('pointerup',stopHoldRecording);btn.addEventListener('pointercancel',stopHoldRecording);btn.addEventListener('pointerleave',function(e){if(voiceRecording)stopHoldRecording(e);});btn.addEventListener('contextmenu',e=>e.preventDefault());}
-  window.openVoiceOrderModal=function(){const text=V$('voiceText');const status=V$('voiceStatus');const endpoint=V$('voiceApiEndpoint');if(endpoint)endpoint.value=localStorage.getItem('fos_voiceApiEndpoint')||'/api/transcribe-volc';if(text&&!text.value)text.value='';if(status){status.classList.remove('listening');status.textContent=vMsg('按住按钮说话，松开后用 火山引擎 ASR 识别。识别后请选择商品候选，再加入购物车。','ボタンを押しながら話し、離すと火山引擎 ASRで認識します。候補を確認してカートに追加してください。');}renderVoiceResults([]);openModal('modalVoiceOrder');setTimeout(bindHoldButton,50);};
+  window.openVoiceOrderModal=function(){const text=V$('voiceText');const status=V$('voiceStatus');const endpoint=V$('voiceApiEndpoint');if(endpoint)endpoint.value=localStorage.getItem('fos_voiceApiEndpoint')||'/api/transcribe-volc';if(text&&!text.value)text.value='';if(status){status.classList.remove('listening');status.textContent=vMsg('按住按钮说话，松开后用 火山引擎流式 ASR 识别。识别后请选择商品候选，再加入购物车。','ボタンを押しながら話し、離すと火山引擎流式 ASRで認識します。候補を確認してカートに追加してください。');}renderVoiceResults([]);openModal('modalVoiceOrder');setTimeout(bindHoldButton,50);};
   window.closeVoiceOrderModal=function(){if(voiceRecording)stopHoldRecording();stopVoiceTracks();closeModal('modalVoiceOrder');};
   window.clearVoiceOrder=function(){const text=V$('voiceText');if(text)text.value='';renderVoiceResults([]);const status=V$('voiceStatus');if(status){status.classList.remove('listening');status.textContent=vMsg('已清空。','クリアしました。');}};
   window.parseVoiceTextFromInput=function(){const text=V$('voiceText')?.value||'';renderVoiceResults(parseVoiceText(text));};
