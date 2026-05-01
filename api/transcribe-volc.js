@@ -137,7 +137,9 @@ function makeFullClientRequest(obj) {
 
 function makeAudioRequest(seq, pcmChunk, isLast) {
   const compressed = gzip(pcmChunk);
-  const flags = isLast ? FLAG_NEG_SEQUENCE : FLAG_POS_SEQUENCE;
+  // For the final audio packet Volcengine expects a negative sequence flag with sequence field.
+  // Use FLAG_NEG_SEQUENCE_1 (0x3), otherwise the server may treat the negative sequence as body size.
+  const flags = isLast ? FLAG_NEG_SEQUENCE_1 : FLAG_POS_SEQUENCE;
   const sendSeq = isLast ? -seq : seq;
 
   return Buffer.concat([
