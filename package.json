@@ -1,4 +1,7 @@
 {
+  "name": "order-voice-volcengine",
+  "version": "1.0.0",
+  "private": true,
   "type": "module",
   "dependencies": {
     "ws": "^8.18.0"
