@@ -1,7 +1,13 @@
 {
-  "functions": {
-    "api/transcribe-volc.js": {
-      "maxDuration": 60
+  "version": 2,
+  "rewrites": [
+    {
+      "source": "/api/transcribe-volc",
+      "destination": "/api/transcribe-volc.js"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
-  }
+  ]
 }
