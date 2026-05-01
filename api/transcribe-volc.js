@@ -1,7 +1,7 @@
 // api/transcribe-volc.js
-// v28: Volcengine SAUC Bigmodel ASR binary protocol version
+// v33: Volcengine SAUC Bigmodel ASR binary protocol, Japanese support with top-level language + sdk_version=2
 // Changed file only.
-// Fixes "unsupported protocol version 7" caused by sending JSON frames directly.
+// Uses language fields in audio/request and defaults WS URL to bigmodel_nostream for ja-JP support.
 
 export const config = {
   api: {
@@ -293,7 +293,7 @@ async function callVolcengineASR(audioBuffer, options = {}) {
   const accessToken = getEnv('VOLCENGINE_ASR_ACCESS_TOKEN');
   const apiKey = getEnv('VOLCENGINE_ASR_API_KEY');
   const resourceId = getEnv('VOLCENGINE_ASR_RESOURCE_ID', 'volc.bigasr.sauc.duration');
-  const wsUrl = getEnv('VOLCENGINE_ASR_WS_URL', 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel');
+  const wsUrl = getEnv('VOLCENGINE_ASR_WS_URL', 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream');
   const language = options.language || getEnv('VOLCENGINE_ASR_LANGUAGE', 'zh-CN');
   const debug = getEnv('VOLCENGINE_ASR_DEBUG', '') === '1';
 
@@ -327,13 +327,18 @@ async function callVolcengineASR(audioBuffer, options = {}) {
 
   const pcm = extractPcmFromWav(audioBuffer);
 
+  // For Japanese ASR, Volcengine/Doubao requires language at the top level.
+  // sdk_version=2 is added according to Doubao guidance.
   const startRequest = {
+    language,
+    sdk_version: '2',
     app: {
       appid: appId || 'default',
       token: accessToken || apiKey || ''
     },
     user: {
-      uid: 'njf-regi'
+      uid: 'njf-regi',
+      language
     },
     audio: {
       format: 'pcm',
@@ -348,7 +353,13 @@ async function callVolcengineASR(audioBuffer, options = {}) {
       workflow: 'audio_in,resample,partition,vad,fe,decode,itn,nlu_punctuate',
       show_utterances: true,
       result_type: 'full',
-      sequence: 1
+      sequence: 1,
+      language,
+      lang: language,
+      sdk_version: '2',
+      corpus: {
+        language
+      }
     }
   };
 
@@ -454,7 +465,7 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       return json(res, 200, {
         ok: true,
-        service: 'NJF REGI Volcengine ASR endpoint v28',
+        service: 'NJF REGI Volcengine ASR endpoint v33 japanese sdk_version2',
         method: 'POST',
         message: 'Function is alive. Send multipart/form-data with an audio file field named audio.',
         env: {
@@ -462,7 +473,7 @@ export default async function handler(req, res) {
           hasAccessToken: !!process.env.VOLCENGINE_ASR_ACCESS_TOKEN,
           hasApiKey: !!process.env.VOLCENGINE_ASR_API_KEY,
           resourceId: process.env.VOLCENGINE_ASR_RESOURCE_ID || '',
-          wsUrl: process.env.VOLCENGINE_ASR_WS_URL || '',
+          wsUrl: process.env.VOLCENGINE_ASR_WS_URL || 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
           language: process.env.VOLCENGINE_ASR_LANGUAGE || '',
           debug: process.env.VOLCENGINE_ASR_DEBUG || ''
         }
