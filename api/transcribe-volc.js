@@ -1,7 +1,7 @@
 // api/transcribe-volc.js
-// v35: stable Chinese Volcengine SAUC Bigmodel ASR
-// Rollback from v34 bilingual experiment.
-// Replace this file only.
+// v28: Volcengine SAUC Bigmodel ASR binary protocol version
+// Changed file only.
+// Fixes "unsupported protocol version 7" caused by sending JSON frames directly.
 
 export const config = {
   api: {
@@ -96,11 +96,14 @@ function gunzipMaybe(buf) {
   }
 }
 
+// Volcengine binary protocol constants
 const PROTOCOL_VERSION = 0x1;
-const DEFAULT_HEADER_SIZE = 0x1;
+const DEFAULT_HEADER_SIZE = 0x1; // 4 bytes
 
 const MSG_FULL_CLIENT_REQUEST = 0x1;
 const MSG_AUDIO_ONLY_REQUEST = 0x2;
+const MSG_FULL_SERVER_RESPONSE = 0x9;
+const MSG_SERVER_ACK = 0xB;
 const MSG_SERVER_ERROR = 0xF;
 
 const FLAG_NO_SEQUENCE = 0x0;
@@ -111,6 +114,7 @@ const FLAG_NEG_SEQUENCE_1 = 0x3;
 const SERIAL_NONE = 0x0;
 const SERIAL_JSON = 0x1;
 
+const COMP_NONE = 0x0;
 const COMP_GZIP = 0x1;
 
 function makeHeader(messageType, flags, serialization, compression) {
@@ -133,8 +137,8 @@ function makeFullClientRequest(obj) {
 
 function makeAudioRequest(seq, pcmChunk, isLast) {
   const compressed = gzip(pcmChunk);
-
-  // Final packet must use flag 0x3.
+  // For the final audio packet Volcengine expects a negative sequence flag with sequence field.
+  // Use FLAG_NEG_SEQUENCE_1 (0x3), otherwise the server may treat the negative sequence as body size.
   const flags = isLast ? FLAG_NEG_SEQUENCE_1 : FLAG_POS_SEQUENCE;
   const sendSeq = isLast ? -seq : seq;
 
@@ -172,12 +176,15 @@ function extractPcmFromWav(input) {
 
 function parseServerFrame(data) {
   const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-  if (buf.length < 4) return { text: buf.toString('utf8') };
+  if (buf.length < 4) {
+    return { rawText: buf.toString('utf8') };
+  }
 
   const b0 = buf[0];
   const b1 = buf[1];
   const b2 = buf[2];
 
+  const version = b0 >> 4;
   const headerSize = (b0 & 0x0f) * 4;
   const messageType = b1 >> 4;
   const flags = b1 & 0x0f;
@@ -217,7 +224,7 @@ function parseServerFrame(data) {
     payload = gunzipMaybe(payload);
   }
 
-  const text = payload.toString('utf8');
+  let text = payload.toString('utf8');
   let jsonPayload = null;
 
   if (serialization === SERIAL_JSON || text.trim().startsWith('{') || text.trim().startsWith('[')) {
@@ -227,10 +234,15 @@ function parseServerFrame(data) {
   }
 
   return {
+    version,
+    headerSize,
     messageType,
     flags,
+    serialization,
+    compression,
     sequence,
     errorCode,
+    payloadSize,
     text,
     json: jsonPayload
   };
@@ -253,6 +265,7 @@ function getTranscriptFromJson(obj) {
     if (typeof c === 'string' && c.trim()) return c.trim();
   }
 
+  // Deep search fallback
   const found = [];
   function walk(x) {
     if (!x || typeof x !== 'object') return;
@@ -356,10 +369,11 @@ async function callVolcengineASR(audioBuffer) {
       try {
         ws.send(makeFullClientRequest(startRequest));
 
-        // Initial full request is sequence 1; audio starts from sequence 2.
+        // 100ms chunks: 16kHz * 16bit mono = 32000 bytes/s, 100ms = 3200 bytes.
         const chunkSize = 3200;
+        // The initial full-client-request is counted by Volcengine as sequence 1.
+        // Therefore audio chunks must start from sequence 2.
         let seq = 2;
-
         for (let offset = 0; offset < pcm.length; offset += chunkSize) {
           const chunk = pcm.slice(offset, Math.min(offset + chunkSize, pcm.length));
           const isLast = offset + chunkSize >= pcm.length;
@@ -394,6 +408,7 @@ async function callVolcengineASR(audioBuffer) {
       const text = getTranscriptFromJson(parsed.json);
       if (text) finalText = text;
 
+      // Usually negative sequence or final response indicates completion.
       if (parsed.sequence !== null && parsed.sequence < 0 && finalText) {
         clearTimeout(timer);
         try { ws.close(); } catch {}
@@ -429,7 +444,7 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       return json(res, 200, {
         ok: true,
-        service: 'NJF REGI Volcengine ASR endpoint v35 stable zh-CN',
+        service: 'NJF REGI Volcengine ASR endpoint v28',
         method: 'POST',
         message: 'Function is alive. Send multipart/form-data with an audio file field named audio.',
         env: {
@@ -437,8 +452,8 @@ export default async function handler(req, res) {
           hasAccessToken: !!process.env.VOLCENGINE_ASR_ACCESS_TOKEN,
           hasApiKey: !!process.env.VOLCENGINE_ASR_API_KEY,
           resourceId: process.env.VOLCENGINE_ASR_RESOURCE_ID || '',
-          wsUrl: process.env.VOLCENGINE_ASR_WS_URL || 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel',
-          language: process.env.VOLCENGINE_ASR_LANGUAGE || 'zh-CN',
+          wsUrl: process.env.VOLCENGINE_ASR_WS_URL || '',
+          language: process.env.VOLCENGINE_ASR_LANGUAGE || '',
           debug: process.env.VOLCENGINE_ASR_DEBUG || ''
         }
       });
