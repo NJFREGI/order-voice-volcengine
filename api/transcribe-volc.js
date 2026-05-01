@@ -248,6 +248,16 @@ function parseServerFrame(data) {
   };
 }
 
+
+function normalizeAsrLanguage(lang) {
+  const v = String(lang || '').trim().toLowerCase();
+  if (!v) return '';
+  if (v === 'ja' || v === 'jp' || v === 'japanese' || v === 'ja-jp') return 'ja-JP';
+  if (v === 'zh' || v === 'cn' || v === 'chinese' || v === 'zh-cn') return 'zh-CN';
+  if (v === 'auto' || v === 'multilingual') return 'auto';
+  return lang;
+}
+
 function getTranscriptFromJson(obj) {
   if (!obj) return '';
 
@@ -278,13 +288,13 @@ function getTranscriptFromJson(obj) {
   return found.join('').trim();
 }
 
-async function callVolcengineASR(audioBuffer) {
+async function callVolcengineASR(audioBuffer, options = {}) {
   const appId = getEnv('VOLCENGINE_ASR_APP_ID');
   const accessToken = getEnv('VOLCENGINE_ASR_ACCESS_TOKEN');
   const apiKey = getEnv('VOLCENGINE_ASR_API_KEY');
   const resourceId = getEnv('VOLCENGINE_ASR_RESOURCE_ID', 'volc.bigasr.sauc.duration');
   const wsUrl = getEnv('VOLCENGINE_ASR_WS_URL', 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel');
-  const language = getEnv('VOLCENGINE_ASR_LANGUAGE', 'zh-CN');
+  const language = options.language || getEnv('VOLCENGINE_ASR_LANGUAGE', 'zh-CN');
   const debug = getEnv('VOLCENGINE_ASR_DEBUG', '') === '1';
 
   if (!apiKey && (!appId || !accessToken)) {
@@ -475,12 +485,15 @@ export default async function handler(req, res) {
     const raw = await readRawBody(req);
 
     let audioFile = null;
+    let requestedLanguage = '';
 
     if (contentType.includes('multipart/form-data')) {
       const parsed = parseMultipart(raw, contentType);
       audioFile = parsed.files.find(f => f.name === 'audio') || parsed.files[0] || null;
+      requestedLanguage = parsed.fields.language || parsed.fields.lang || '';
     } else if (contentType.includes('application/json')) {
       const body = JSON.parse(raw.toString('utf8') || '{}');
+      requestedLanguage = body.language || body.lang || '';
       if (body.audio_base64) {
         audioFile = {
           name: 'audio',
@@ -506,7 +519,7 @@ export default async function handler(req, res) {
       });
     }
 
-    const result = await callVolcengineASR(audioFile.buffer);
+    const result = await callVolcengineASR(audioFile.buffer, { language: normalizeAsrLanguage(requestedLanguage) });
 
     return json(res, 200, {
       ok: true,
