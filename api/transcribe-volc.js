@@ -369,7 +369,9 @@ async function callVolcengineASR(audioBuffer) {
 
         // 100ms chunks: 16kHz * 16bit mono = 32000 bytes/s, 100ms = 3200 bytes.
         const chunkSize = 3200;
-        let seq = 1;
+        // The initial full-client-request is counted by Volcengine as sequence 1.
+        // Therefore audio chunks must start from sequence 2.
+        let seq = 2;
         for (let offset = 0; offset < pcm.length; offset += chunkSize) {
           const chunk = pcm.slice(offset, Math.min(offset + chunkSize, pcm.length));
           const isLast = offset + chunkSize >= pcm.length;
