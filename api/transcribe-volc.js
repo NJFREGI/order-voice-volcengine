@@ -1,6 +1,6 @@
 // api/transcribe-volc.js
-// v34: Volcengine SAUC Bigmodel ASR binary protocol
-// Bilingual Japanese + Chinese crosslingual config based on Doubao guidance.
+// v35: stable Chinese Volcengine SAUC Bigmodel ASR
+// Rollback from v34 bilingual experiment.
 // Replace this file only.
 
 export const config = {
@@ -96,14 +96,11 @@ function gunzipMaybe(buf) {
   }
 }
 
-// Volcengine binary protocol constants
 const PROTOCOL_VERSION = 0x1;
-const DEFAULT_HEADER_SIZE = 0x1; // 4 bytes
+const DEFAULT_HEADER_SIZE = 0x1;
 
 const MSG_FULL_CLIENT_REQUEST = 0x1;
 const MSG_AUDIO_ONLY_REQUEST = 0x2;
-const MSG_FULL_SERVER_RESPONSE = 0x9;
-const MSG_SERVER_ACK = 0xB;
 const MSG_SERVER_ERROR = 0xF;
 
 const FLAG_NO_SEQUENCE = 0x0;
@@ -137,8 +134,7 @@ function makeFullClientRequest(obj) {
 function makeAudioRequest(seq, pcmChunk, isLast) {
   const compressed = gzip(pcmChunk);
 
-  // Final packet must use FLAG_NEG_SEQUENCE_1.
-  // This avoids "declared body size does not match actual body size".
+  // Final packet must use flag 0x3.
   const flags = isLast ? FLAG_NEG_SEQUENCE_1 : FLAG_POS_SEQUENCE;
   const sendSeq = isLast ? -seq : seq;
 
@@ -176,15 +172,12 @@ function extractPcmFromWav(input) {
 
 function parseServerFrame(data) {
   const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-  if (buf.length < 4) {
-    return { rawText: buf.toString('utf8') };
-  }
+  if (buf.length < 4) return { text: buf.toString('utf8') };
 
   const b0 = buf[0];
   const b1 = buf[1];
   const b2 = buf[2];
 
-  const version = b0 >> 4;
   const headerSize = (b0 & 0x0f) * 4;
   const messageType = b1 >> 4;
   const flags = b1 & 0x0f;
@@ -224,7 +217,7 @@ function parseServerFrame(data) {
     payload = gunzipMaybe(payload);
   }
 
-  let text = payload.toString('utf8');
+  const text = payload.toString('utf8');
   let jsonPayload = null;
 
   if (serialization === SERIAL_JSON || text.trim().startsWith('{') || text.trim().startsWith('[')) {
@@ -234,28 +227,13 @@ function parseServerFrame(data) {
   }
 
   return {
-    version,
-    headerSize,
     messageType,
     flags,
-    serialization,
-    compression,
     sequence,
     errorCode,
-    payloadSize,
     text,
     json: jsonPayload
   };
-}
-
-function normalizeAsrLanguage(lang) {
-  const v = String(lang || '').trim().toLowerCase();
-  if (!v) return '';
-  if (v === 'ja' || v === 'jp' || v === 'japanese' || v === 'ja-jp') return 'ja-JP';
-  if (v === 'zh' || v === 'cn' || v === 'chinese' || v === 'zh-cn') return 'zh-CN';
-  if (v === 'bilingual' || v === 'ja-zh' || v === 'zh-ja' || v === 'ja-jp,zh-cn' || v === 'zh-cn,ja-jp') return 'ja-JP,zh-CN';
-  if (v === 'auto' || v === 'multilingual') return 'ja-JP,zh-CN';
-  return lang;
 }
 
 function getTranscriptFromJson(obj) {
@@ -287,35 +265,14 @@ function getTranscriptFromJson(obj) {
   return found.join('').trim();
 }
 
-function buildHotWords() {
-  return [
-    'ジャガイモ',
-    'じゃがいも',
-    '鶏もも肉',
-    'とりもも',
-    'キャベツ',
-    '玉ねぎ',
-    '豆腐',
-    '豆腐皮',
-    '干豆腐',
-    'カートに入れる',
-    '商品をカートに追加',
-    '注文する',
-    '加入购物车',
-    '立即下单',
-    '添加商品'
-  ];
-}
-
-async function callVolcengineASR(audioBuffer, options = {}) {
+async function callVolcengineASR(audioBuffer) {
   const appId = getEnv('VOLCENGINE_ASR_APP_ID');
   const accessToken = getEnv('VOLCENGINE_ASR_ACCESS_TOKEN');
   const apiKey = getEnv('VOLCENGINE_ASR_API_KEY');
   const resourceId = getEnv('VOLCENGINE_ASR_RESOURCE_ID', 'volc.bigasr.sauc.duration');
-  const wsUrl = getEnv('VOLCENGINE_ASR_WS_URL', 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream');
-  const language = normalizeAsrLanguage(options.language || getEnv('VOLCENGINE_ASR_LANGUAGE', 'ja-JP,zh-CN'));
+  const wsUrl = getEnv('VOLCENGINE_ASR_WS_URL', 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel');
+  const language = getEnv('VOLCENGINE_ASR_LANGUAGE', 'zh-CN');
   const debug = getEnv('VOLCENGINE_ASR_DEBUG', '') === '1';
-  const hotWords = buildHotWords();
 
   if (!apiKey && (!appId || !accessToken)) {
     throw new Error('Missing Volcengine credentials. Set VOLCENGINE_ASR_APP_ID + VOLCENGINE_ASR_ACCESS_TOKEN, or VOLCENGINE_ASR_API_KEY.');
@@ -347,73 +304,28 @@ async function callVolcengineASR(audioBuffer, options = {}) {
 
   const pcm = extractPcmFromWav(audioBuffer);
 
-  // Doubao guidance:
-  // {
-  //   audio: {...},
-  //   language: "ja-JP,zh-CN",
-  //   sdk_version: "2"
-  // }
-  // plus bilingual/cross-language flags.
-  const bilingualConfig = {
-    language,
-    sample_rate: 16000,
-    format: 'wav',
-    crosslingual: true,
-    cross_language: true,
-    caption_type: 'speech',
-    hot_words: hotWords
-  };
-
   const startRequest = {
-    language,
-    sdk_version: '2',
-    sample_rate: 16000,
-    format: 'wav',
-    crosslingual: true,
-    cross_language: true,
-    caption_type: 'speech',
-    hot_words: hotWords,
-    config: bilingualConfig,
     app: {
       appid: appId || 'default',
       token: accessToken || apiKey || ''
     },
     user: {
-      uid: 'njf-regi',
-      language
+      uid: 'njf-regi'
     },
     audio: {
-      format: 'wav',
+      format: 'pcm',
       codec: 'raw',
       rate: 16000,
-      sample_rate: 16000,
       bits: 16,
       channel: 1,
-      language,
-      crosslingual: true,
-      cross_language: true,
-      caption_type: 'speech'
+      language
     },
     request: {
       reqid: requestId,
       workflow: 'audio_in,resample,partition,vad,fe,decode,itn,nlu_punctuate',
       show_utterances: true,
       result_type: 'full',
-      sequence: 1,
-      language,
-      lang: language,
-      sdk_version: '2',
-      sample_rate: 16000,
-      format: 'wav',
-      crosslingual: true,
-      cross_language: true,
-      caption_type: 'speech',
-      hot_words: hotWords,
-      corpus: {
-        language,
-        crosslingual: true,
-        cross_language: true
-      }
+      sequence: 1
     }
   };
 
@@ -444,10 +356,10 @@ async function callVolcengineASR(audioBuffer, options = {}) {
       try {
         ws.send(makeFullClientRequest(startRequest));
 
-        // The initial full-client-request is counted by Volcengine as sequence 1.
-        // Therefore audio chunks must start from sequence 2.
-        const chunkSize = 3200; // 100ms at 16kHz 16bit mono.
+        // Initial full request is sequence 1; audio starts from sequence 2.
+        const chunkSize = 3200;
         let seq = 2;
+
         for (let offset = 0; offset < pcm.length; offset += chunkSize) {
           const chunk = pcm.slice(offset, Math.min(offset + chunkSize, pcm.length));
           const isLast = offset + chunkSize >= pcm.length;
@@ -517,7 +429,7 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       return json(res, 200, {
         ok: true,
-        service: 'NJF REGI Volcengine ASR endpoint v34 bilingual crosslingual',
+        service: 'NJF REGI Volcengine ASR endpoint v35 stable zh-CN',
         method: 'POST',
         message: 'Function is alive. Send multipart/form-data with an audio file field named audio.',
         env: {
@@ -525,8 +437,8 @@ export default async function handler(req, res) {
           hasAccessToken: !!process.env.VOLCENGINE_ASR_ACCESS_TOKEN,
           hasApiKey: !!process.env.VOLCENGINE_ASR_API_KEY,
           resourceId: process.env.VOLCENGINE_ASR_RESOURCE_ID || '',
-          wsUrl: process.env.VOLCENGINE_ASR_WS_URL || 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream',
-          language: process.env.VOLCENGINE_ASR_LANGUAGE || 'ja-JP,zh-CN',
+          wsUrl: process.env.VOLCENGINE_ASR_WS_URL || 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel',
+          language: process.env.VOLCENGINE_ASR_LANGUAGE || 'zh-CN',
           debug: process.env.VOLCENGINE_ASR_DEBUG || ''
         }
       });
@@ -548,15 +460,12 @@ export default async function handler(req, res) {
     const raw = await readRawBody(req);
 
     let audioFile = null;
-    let requestedLanguage = '';
 
     if (contentType.includes('multipart/form-data')) {
       const parsed = parseMultipart(raw, contentType);
       audioFile = parsed.files.find(f => f.name === 'audio') || parsed.files[0] || null;
-      requestedLanguage = parsed.fields.language || parsed.fields.lang || '';
     } else if (contentType.includes('application/json')) {
       const body = JSON.parse(raw.toString('utf8') || '{}');
-      requestedLanguage = body.language || body.lang || '';
       if (body.audio_base64) {
         audioFile = {
           name: 'audio',
@@ -582,9 +491,7 @@ export default async function handler(req, res) {
       });
     }
 
-    const result = await callVolcengineASR(audioFile.buffer, {
-      language: normalizeAsrLanguage(requestedLanguage) || undefined
-    });
+    const result = await callVolcengineASR(audioFile.buffer);
 
     return json(res, 200, {
       ok: true,
