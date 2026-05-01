@@ -1,15 +1,15 @@
 // api/transcribe-volc.js
-// v27: safer Vercel function wrapper for Volcengine ASR
-// - GET returns health check instead of crashing
-// - POST errors return JSON instead of Vercel 500 page
-// - dynamic ws import to avoid top-level crash
-// - supports multipart/form-data upload from browser
+// v28: Volcengine SAUC Bigmodel ASR binary protocol version
+// Changed file only.
+// Fixes "unsupported protocol version 7" caused by sending JSON frames directly.
 
 export const config = {
   api: {
     bodyParser: false
   }
 };
+
+import zlib from 'zlib';
 
 function json(res, status, data) {
   res.statusCode = status;
@@ -60,7 +60,7 @@ function parseMultipart(buffer, contentType) {
     if (filenameMatch) {
       files.push({
         name,
-        filename: filenameMatch[1] || 'audio.webm',
+        filename: filenameMatch[1] || 'audio.wav',
         contentType: typeMatch ? typeMatch[1] : 'application/octet-stream',
         buffer: bodyBuffer
       });
@@ -72,18 +72,211 @@ function parseMultipart(buffer, contentType) {
   return { fields, files };
 }
 
-function safeBase64(buffer) {
-  return Buffer.from(buffer).toString('base64');
+function int32BE(n) {
+  const b = Buffer.alloc(4);
+  b.writeInt32BE(n, 0);
+  return b;
 }
 
-/**
- * NOTE:
- * This function keeps the Volcengine call wrapped and debuggable.
- * The exact binary protocol may still need adjustment depending on
- * your Volcengine service version. This version prevents crashes and
- * returns useful diagnostics to the frontend.
- */
-async function callVolcengineASR(audioBuffer, debugInfo = {}) {
+function uint32BE(n) {
+  const b = Buffer.alloc(4);
+  b.writeUInt32BE(n >>> 0, 0);
+  return b;
+}
+
+function gzip(buf) {
+  return zlib.gzipSync(Buffer.isBuffer(buf) ? buf : Buffer.from(buf));
+}
+
+function gunzipMaybe(buf) {
+  try {
+    return zlib.gunzipSync(buf);
+  } catch {
+    return buf;
+  }
+}
+
+// Volcengine binary protocol constants
+const PROTOCOL_VERSION = 0x1;
+const DEFAULT_HEADER_SIZE = 0x1; // 4 bytes
+
+const MSG_FULL_CLIENT_REQUEST = 0x1;
+const MSG_AUDIO_ONLY_REQUEST = 0x2;
+const MSG_FULL_SERVER_RESPONSE = 0x9;
+const MSG_SERVER_ACK = 0xB;
+const MSG_SERVER_ERROR = 0xF;
+
+const FLAG_NO_SEQUENCE = 0x0;
+const FLAG_POS_SEQUENCE = 0x1;
+const FLAG_NEG_SEQUENCE = 0x2;
+const FLAG_NEG_SEQUENCE_1 = 0x3;
+
+const SERIAL_NONE = 0x0;
+const SERIAL_JSON = 0x1;
+
+const COMP_NONE = 0x0;
+const COMP_GZIP = 0x1;
+
+function makeHeader(messageType, flags, serialization, compression) {
+  return Buffer.from([
+    (PROTOCOL_VERSION << 4) | DEFAULT_HEADER_SIZE,
+    (messageType << 4) | flags,
+    (serialization << 4) | compression,
+    0x00
+  ]);
+}
+
+function makeFullClientRequest(obj) {
+  const payload = gzip(Buffer.from(JSON.stringify(obj), 'utf8'));
+  return Buffer.concat([
+    makeHeader(MSG_FULL_CLIENT_REQUEST, FLAG_NO_SEQUENCE, SERIAL_JSON, COMP_GZIP),
+    uint32BE(payload.length),
+    payload
+  ]);
+}
+
+function makeAudioRequest(seq, pcmChunk, isLast) {
+  const compressed = gzip(pcmChunk);
+  const flags = isLast ? FLAG_NEG_SEQUENCE : FLAG_POS_SEQUENCE;
+  const sendSeq = isLast ? -seq : seq;
+
+  return Buffer.concat([
+    makeHeader(MSG_AUDIO_ONLY_REQUEST, flags, SERIAL_NONE, COMP_GZIP),
+    int32BE(sendSeq),
+    uint32BE(compressed.length),
+    compressed
+  ]);
+}
+
+function extractPcmFromWav(input) {
+  const buf = Buffer.from(input);
+
+  if (buf.length < 44) return buf;
+  const riff = buf.slice(0, 4).toString('ascii');
+  const wave = buf.slice(8, 12).toString('ascii');
+  if (riff !== 'RIFF' || wave !== 'WAVE') return buf;
+
+  let offset = 12;
+  while (offset + 8 <= buf.length) {
+    const chunkId = buf.slice(offset, offset + 4).toString('ascii');
+    const chunkSize = buf.readUInt32LE(offset + 4);
+    const dataStart = offset + 8;
+
+    if (chunkId === 'data') {
+      return buf.slice(dataStart, dataStart + chunkSize);
+    }
+
+    offset = dataStart + chunkSize + (chunkSize % 2);
+  }
+
+  return buf;
+}
+
+function parseServerFrame(data) {
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+  if (buf.length < 4) {
+    return { rawText: buf.toString('utf8') };
+  }
+
+  const b0 = buf[0];
+  const b1 = buf[1];
+  const b2 = buf[2];
+
+  const version = b0 >> 4;
+  const headerSize = (b0 & 0x0f) * 4;
+  const messageType = b1 >> 4;
+  const flags = b1 & 0x0f;
+  const serialization = b2 >> 4;
+  const compression = b2 & 0x0f;
+
+  let offset = headerSize;
+  let sequence = null;
+  let errorCode = null;
+
+  if (flags === FLAG_POS_SEQUENCE || flags === FLAG_NEG_SEQUENCE || flags === FLAG_NEG_SEQUENCE_1) {
+    if (offset + 4 <= buf.length) {
+      sequence = buf.readInt32BE(offset);
+      offset += 4;
+    }
+  }
+
+  if (messageType === MSG_SERVER_ERROR) {
+    if (offset + 4 <= buf.length) {
+      errorCode = buf.readInt32BE(offset);
+      offset += 4;
+    }
+  }
+
+  let payloadSize = null;
+  if (offset + 4 <= buf.length) {
+    payloadSize = buf.readUInt32BE(offset);
+    offset += 4;
+  }
+
+  let payload = buf.slice(offset);
+  if (payloadSize !== null && payloadSize >= 0 && offset + payloadSize <= buf.length) {
+    payload = buf.slice(offset, offset + payloadSize);
+  }
+
+  if (compression === COMP_GZIP && payload.length) {
+    payload = gunzipMaybe(payload);
+  }
+
+  let text = payload.toString('utf8');
+  let jsonPayload = null;
+
+  if (serialization === SERIAL_JSON || text.trim().startsWith('{') || text.trim().startsWith('[')) {
+    try {
+      jsonPayload = JSON.parse(text);
+    } catch {}
+  }
+
+  return {
+    version,
+    headerSize,
+    messageType,
+    flags,
+    serialization,
+    compression,
+    sequence,
+    errorCode,
+    payloadSize,
+    text,
+    json: jsonPayload
+  };
+}
+
+function getTranscriptFromJson(obj) {
+  if (!obj) return '';
+
+  const candidates = [
+    obj.text,
+    obj.result?.text,
+    obj.result?.utterances?.map(u => u.text).join(''),
+    obj.result?.[0]?.text,
+    obj.payload_msg?.text,
+    obj.payload_msg?.result?.text,
+    obj.payload_msg?.result?.utterances?.map(u => u.text).join('')
+  ];
+
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim()) return c.trim();
+  }
+
+  // Deep search fallback
+  const found = [];
+  function walk(x) {
+    if (!x || typeof x !== 'object') return;
+    for (const [k, v] of Object.entries(x)) {
+      if (k === 'text' && typeof v === 'string' && v.trim()) found.push(v.trim());
+      else if (typeof v === 'object') walk(v);
+    }
+  }
+  walk(obj);
+  return found.join('').trim();
+}
+
+async function callVolcengineASR(audioBuffer) {
   const appId = getEnv('VOLCENGINE_ASR_APP_ID');
   const accessToken = getEnv('VOLCENGINE_ASR_ACCESS_TOKEN');
   const apiKey = getEnv('VOLCENGINE_ASR_API_KEY');
@@ -101,27 +294,51 @@ async function callVolcengineASR(audioBuffer, debugInfo = {}) {
     const wsModule = await import('ws');
     WebSocket = wsModule.default || wsModule.WebSocket;
   } catch (err) {
-    throw new Error('Missing dependency "ws". Please make sure package.json includes "ws". Original: ' + err.message);
+    throw new Error('Missing dependency "ws". package.json must include "ws". Original: ' + err.message);
   }
 
   const requestId = 'njf-' + Date.now() + '-' + Math.random().toString(16).slice(2);
-
   const headers = {
     'X-Api-Resource-Id': resourceId,
     'X-Api-Request-Id': requestId,
-    'X-Api-Connect-Id': requestId
+    'X-Api-Connect-Id': requestId,
+    'Host': 'openspeech.bytedance.com'
   };
 
-  // Old console credentials
   if (appId && accessToken) {
     headers['X-Api-App-Key'] = appId;
     headers['X-Api-Access-Key'] = accessToken;
   }
-
-  // New console API key
   if (apiKey) {
     headers['X-Api-Key'] = apiKey;
   }
+
+  const pcm = extractPcmFromWav(audioBuffer);
+
+  const startRequest = {
+    app: {
+      appid: appId || 'default',
+      token: accessToken || apiKey || ''
+    },
+    user: {
+      uid: 'njf-regi'
+    },
+    audio: {
+      format: 'pcm',
+      codec: 'raw',
+      rate: 16000,
+      bits: 16,
+      channel: 1,
+      language
+    },
+    request: {
+      reqid: requestId,
+      workflow: 'audio_in,resample,partition,vad,fe,decode,itn,nlu_punctuate',
+      show_utterances: true,
+      result_type: 'full',
+      sequence: 1
+    }
+  };
 
   return await new Promise((resolve, reject) => {
     const diagnostics = {
@@ -130,8 +347,10 @@ async function callVolcengineASR(audioBuffer, debugInfo = {}) {
       language,
       requestId,
       authMode: apiKey ? 'api_key' : 'app_id_access_token',
-      audioBytes: audioBuffer.length,
+      wavBytes: audioBuffer.length,
+      pcmBytes: pcm.length,
       serverFrames: [],
+      parsedFrames: [],
       close: null
     };
 
@@ -142,33 +361,21 @@ async function callVolcengineASR(audioBuffer, debugInfo = {}) {
       reject(new Error('Volcengine ASR timeout. diagnostics=' + JSON.stringify(diagnostics)));
     }, 30000);
 
+    let finalText = '';
+
     ws.on('open', () => {
       try {
-        // Many Volcengine SAUC examples use a binary protocol.
-        // To avoid sending invalid corpus/context, v27 sends a minimal JSON control packet first,
-        // then raw audio as a separate binary frame. If your service requires the strict binary
-        // protocol, the returned diagnostics will show the exact server error.
-        const startPayload = {
-          user: { uid: 'njf-regi' },
-          audio: {
-            format: 'wav',
-            codec: 'raw',
-            rate: 16000,
-            bits: 16,
-            channel: 1,
-            language
-          },
-          request: {
-            model_name: 'bigmodel',
-            enable_itn: true,
-            enable_punc: true,
-            result_type: 'full'
-          }
-        };
+        ws.send(makeFullClientRequest(startRequest));
 
-        ws.send(JSON.stringify(startPayload));
-        ws.send(audioBuffer);
-        ws.send(JSON.stringify({ end: true }));
+        // 100ms chunks: 16kHz * 16bit mono = 32000 bytes/s, 100ms = 3200 bytes.
+        const chunkSize = 3200;
+        let seq = 1;
+        for (let offset = 0; offset < pcm.length; offset += chunkSize) {
+          const chunk = pcm.slice(offset, Math.min(offset + chunkSize, pcm.length));
+          const isLast = offset + chunkSize >= pcm.length;
+          ws.send(makeAudioRequest(seq, chunk, isLast));
+          seq += 1;
+        }
       } catch (err) {
         clearTimeout(timer);
         reject(err);
@@ -176,31 +383,32 @@ async function callVolcengineASR(audioBuffer, debugInfo = {}) {
     });
 
     ws.on('message', (data) => {
-      const text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
-      diagnostics.serverFrames.push(text.slice(0, 1000));
+      const parsed = parseServerFrame(data);
+      diagnostics.parsedFrames.push({
+        messageType: parsed.messageType,
+        flags: parsed.flags,
+        sequence: parsed.sequence,
+        errorCode: parsed.errorCode,
+        text: parsed.text ? parsed.text.slice(0, 1000) : ''
+      });
 
-      try {
-        const obj = JSON.parse(text);
-        const resultText =
-          obj.text ||
-          obj.result?.text ||
-          obj.result?.[0]?.text ||
-          obj.payload_msg?.result?.text ||
-          obj.payload_msg?.text ||
-          '';
+      if (parsed.text) diagnostics.serverFrames.push(parsed.text.slice(0, 1000));
 
-        if (resultText) {
-          clearTimeout(timer);
-          try { ws.close(); } catch {}
-          resolve({ text: resultText, diagnostics: debug ? diagnostics : undefined });
-        }
+      if (parsed.messageType === MSG_SERVER_ERROR || parsed.errorCode) {
+        clearTimeout(timer);
+        try { ws.close(); } catch {}
+        reject(new Error('Volcengine server error: ' + (parsed.text || '') + ' diagnostics=' + JSON.stringify(diagnostics)));
+        return;
+      }
 
-        if (obj.error || obj.code || obj.message) {
-          // Do not reject immediately because some APIs send intermediate messages.
-          diagnostics.lastParsed = obj;
-        }
-      } catch {
-        // Keep raw server frame for diagnostics.
+      const text = getTranscriptFromJson(parsed.json);
+      if (text) finalText = text;
+
+      // Usually negative sequence or final response indicates completion.
+      if (parsed.sequence !== null && parsed.sequence < 0 && finalText) {
+        clearTimeout(timer);
+        try { ws.close(); } catch {}
+        resolve({ text: finalText, diagnostics: debug ? diagnostics : undefined });
       }
     });
 
@@ -208,10 +416,8 @@ async function callVolcengineASR(audioBuffer, debugInfo = {}) {
       clearTimeout(timer);
       diagnostics.close = { code, reason: reason ? reason.toString() : '' };
 
-      const joined = diagnostics.serverFrames.join('\n');
-      const maybeText = extractLikelyText(joined);
-      if (maybeText) {
-        resolve({ text: maybeText, diagnostics: debug ? diagnostics : undefined });
+      if (finalText) {
+        resolve({ text: finalText, diagnostics: debug ? diagnostics : undefined });
         return;
       }
 
@@ -225,15 +431,6 @@ async function callVolcengineASR(audioBuffer, debugInfo = {}) {
   });
 }
 
-function extractLikelyText(raw) {
-  if (!raw) return '';
-  try {
-    const matches = [...raw.matchAll(/"text"\s*:\s*"([^"]+)"/g)];
-    if (matches.length) return matches.map(m => m[1]).join('');
-  } catch {}
-  return '';
-}
-
 export default async function handler(req, res) {
   try {
     if (req.method === 'OPTIONS') {
@@ -243,7 +440,7 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       return json(res, 200, {
         ok: true,
-        service: 'NJF REGI Volcengine ASR endpoint',
+        service: 'NJF REGI Volcengine ASR endpoint v28',
         method: 'POST',
         message: 'Function is alive. Send multipart/form-data with an audio file field named audio.',
         env: {
@@ -252,6 +449,7 @@ export default async function handler(req, res) {
           hasApiKey: !!process.env.VOLCENGINE_ASR_API_KEY,
           resourceId: process.env.VOLCENGINE_ASR_RESOURCE_ID || '',
           wsUrl: process.env.VOLCENGINE_ASR_WS_URL || '',
+          language: process.env.VOLCENGINE_ASR_LANGUAGE || '',
           debug: process.env.VOLCENGINE_ASR_DEBUG || ''
         }
       });
@@ -273,15 +471,12 @@ export default async function handler(req, res) {
     const raw = await readRawBody(req);
 
     let audioFile = null;
-    let audioUrl = '';
 
     if (contentType.includes('multipart/form-data')) {
       const parsed = parseMultipart(raw, contentType);
       audioFile = parsed.files.find(f => f.name === 'audio') || parsed.files[0] || null;
-      audioUrl = parsed.fields.audio_url || '';
     } else if (contentType.includes('application/json')) {
       const body = JSON.parse(raw.toString('utf8') || '{}');
-      audioUrl = body.audio_url || '';
       if (body.audio_base64) {
         audioFile = {
           name: 'audio',
@@ -292,17 +487,10 @@ export default async function handler(req, res) {
       }
     }
 
-    if (!audioFile && !audioUrl) {
+    if (!audioFile) {
       return json(res, 400, {
         ok: false,
-        error: 'No audio found. Send multipart/form-data with field "audio", or JSON with audio_base64/audio_url.'
-      });
-    }
-
-    if (audioUrl) {
-      return json(res, 501, {
-        ok: false,
-        error: 'audio_url mode is not implemented in this endpoint. Please upload audio file as multipart field "audio".'
+        error: 'No audio found. Send multipart/form-data with field "audio", or JSON with audio_base64.'
       });
     }
 
@@ -314,10 +502,7 @@ export default async function handler(req, res) {
       });
     }
 
-    const result = await callVolcengineASR(audioFile.buffer, {
-      filename: audioFile.filename,
-      contentType: audioFile.contentType
-    });
+    const result = await callVolcengineASR(audioFile.buffer);
 
     return json(res, 200, {
       ok: true,
