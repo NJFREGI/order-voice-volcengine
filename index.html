@@ -1,34 +1,37 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>受発注システム / 订货系统</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <meta charset="UTF-8">
+  <title>数据库连接测试</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
+  <h1 id="status">正在连接...</h1>
+
 <script>
-// 直接写死你的 Supabase 信息（这里替换成你自己的完整 Key）
+// 👉 这里替换成你完整的 Legacy anon public key
+const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdiZmRuYmlna2hvaWZvZmRpYWN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzNjUwMjgsImV4cCI6MjA5MDk0MTAyOH0.nN2m8C3nGO43nh71p9I0lgkMyyW7Ko3_BcHr_EyuQgo";
 const SUPABASE_URL = "https://gbfdbnkgikhoifdiacz.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdiZmRuYmlna2hvaWZvZmRpYWN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzNjUwMjgsImV4cCI6MjA5MDk0MTAyOH0.nN2m8C3nGO43nh71p9I0lgkMyyW7Ko3_BcHr_EyuQgo";
 
-// 初始化 Supabase
-const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabase = supabase.createClient(SUPABASE_URL, ANON_KEY);
 
-// 测试连接
-async function init() {
+async function test() {
+  const el = document.getElementById("status");
   try {
+    // 读取shops表，测试连接
     const { data, error } = await supabase.from("shops").select("id").limit(1);
     if (error) throw error;
-    alert("✅ 数据库连接成功！即将进入系统");
-    // 这里写你原来的主界面代码即可
+    el.textContent = "✅ 连接成功！数据已读取";
+    el.style.color = "green";
+    console.log("连接成功，数据：", data);
   } catch (err) {
-    alert("❌ 连接失败：" + err.message);
-    console.error("连接错误详情：", err);
+    el.textContent = "❌ 连接失败：" + err.message;
+    el.style.color = "red";
+    console.error("错误详情：", err);
   }
 }
 
-init();
+test();
 </script>
 </body>
 </html>
