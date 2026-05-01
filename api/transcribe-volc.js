@@ -1,5 +1,5 @@
 // Vercel Serverless Function: /api/transcribe-volc
-// V23: Volcengine/Doubao SAUC ASR debug adapter for NJF voice order.
+// V24: Volcengine/Doubao SAUC ASR debug adapter for NJF voice order.
 // Adds detailed handshake/close diagnostics for HTTP 400/403 and supports old/new auth headers.
 
 export const config = { maxDuration: 60 };
@@ -251,7 +251,7 @@ async function transcribeByVolcSauc(audioBuffer, fields) {
     });
 
     ws.on('open', () => {
-      const productHint = String(fields.product_hint || '').slice(0, 1500);
+      // v24: removed productHint/corpus from init payload to avoid corpusCtx JSON parse error.
       const initPayload = {
         user: { uid: process.env.VOLCENGINE_UID || 'njf_voice_order' },
         audio: { format: 'pcm', rate: 16000, bits: 16, channel: 1, codec: 'raw' },
@@ -261,8 +261,7 @@ async function transcribeByVolcSauc(audioBuffer, fields) {
           enable_punc: true,
           enable_itn: true,
           enable_ddc: true,
-          show_utterances: true,
-          corpus: productHint ? { context: productHint } : undefined,
+          show_utterances: true
         }
       };
       diagnostics.initPayload = initPayload;
@@ -348,14 +347,14 @@ export default async function handler(req, res) {
     const audio = files.audio;
     if (!audio?.buffer?.length) throw new Error('Missing audio file');
     const { text, diagnostics } = await transcribeByVolcSauc(audio.buffer, fields || {});
-    return res.status(200).json({ text, provider: 'volcengine-sauc-stream-v23', debug: process.env.VOLCENGINE_ASR_DEBUG === '1' ? diagnostics : undefined });
+    return res.status(200).json({ text, provider: 'volcengine-sauc-stream-v24', debug: process.env.VOLCENGINE_ASR_DEBUG === '1' ? diagnostics : undefined });
   } catch (err) {
     const diagnostics = err?.diagnostics;
     return res.status(500).json({
       error: err?.message || String(err),
-      provider: 'volcengine-sauc-stream-v23',
+      provider: 'volcengine-sauc-stream-v24',
       diagnostics,
-      hint: '如果是 HTTP 400，请把 diagnostics.handshake 或 serverFrames 截图发给我；如果是 403，通常是资源 ID 或鉴权不匹配。'
+      hint: 'v24 已移除 corpus/context 热词参数。如果仍失败，请把 diagnostics.serverFrames 截图发给我。'
     });
   }
 }
