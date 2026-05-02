@@ -7,26 +7,30 @@
 </head>
 <body>
   <h1 id="status">正在连接...</h1>
+  <pre id="error"></pre>
 
 <script>
 // 👉 这里替换成你完整的 Legacy anon public key
 const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdiZmRuYmlna2hvaWZvZmRpYWN6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzNjUwMjgsImV4cCI6MjA5MDk0MTAyOH0.nN2m8C3nGO43nh71p9I0lgkMyyW7Ko3_BcHr_EyuQgo";
 const SUPABASE_URL = "https://gbfdbnkgikhoifdiacz.supabase.co";
 
-const supabase = supabase.createClient(SUPABASE_URL, ANON_KEY);
+// 变量名改成 supabaseTest，避免和旧代码冲突
+const supabaseTest = supabase.createClient(SUPABASE_URL, ANON_KEY);
 
 async function test() {
-  const el = document.getElementById("status");
+  const statusEl = document.getElementById("status");
+  const errorEl = document.getElementById("error");
   try {
-    // 读取shops表，测试连接
-    const { data, error } = await supabase.from("shops").select("id").limit(1);
+    // 这里也要改成 supabaseTest
+    const { data, error } = await supabaseTest.from("shops").select("id").limit(1);
     if (error) throw error;
-    el.textContent = "✅ 连接成功！数据已读取";
-    el.style.color = "green";
+    statusEl.textContent = "✅ 连接成功！数据已读取";
+    statusEl.style.color = "green";
     console.log("连接成功，数据：", data);
   } catch (err) {
-    el.textContent = "❌ 连接失败：" + err.message;
-    el.style.color = "red";
+    statusEl.textContent = "❌ 连接失败";
+    statusEl.style.color = "red";
+    errorEl.textContent = "错误详情：" + JSON.stringify(err, null, 2);
     console.error("错误详情：", err);
   }
 }
