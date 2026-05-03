@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <!-- V41 clean no leak real reset -->
 <!-- V44 restore voice button -->
+<!-- V45 cart order voice UI -->
 <title>受発注システム / 订货系统 - PRO UI v13</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -904,6 +905,71 @@ body{letter-spacing:.01em;background:#f7f8fa;}
 #voiceResultWrap .voice-item button{
   min-width:44px!important;
   min-height:44px!important;
+}
+
+
+/* V45: voice candidate card + cart full name layout */
+#voiceResultWrap .voice-item,
+.voice-result-wrap .voice-item{
+  padding:14px 12px!important;
+  display:block!important;
+}
+#voiceResultWrap .voice-item > div,
+.voice-result-wrap .voice-item > div{
+  min-width:0!important;
+}
+#voiceResultWrap .voice-item .voice-raw,
+.voice-result-wrap .voice-item .voice-raw,
+#voiceResultWrap .voice-raw,
+.voice-result-wrap .voice-raw{
+  display:none!important;
+}
+#voiceResultWrap .voice-item select,
+.voice-result-wrap .voice-item select{
+  width:100%!important;
+  max-width:100%!important;
+  min-height:52px!important;
+  white-space:normal!important;
+  text-overflow:clip!important;
+  overflow:visible!important;
+  font-size:18px!important;
+  font-weight:800!important;
+  line-height:1.35!important;
+}
+#voiceResultWrap .voice-item input[type="number"],
+.voice-result-wrap .voice-item input[type="number"]{
+  width:96px!important;
+  height:48px!important;
+  text-align:center!important;
+  font-size:22px!important;
+  font-weight:800!important;
+}
+#voiceResultWrap .voice-item button,
+.voice-result-wrap .voice-item button{
+  min-width:46px!important;
+  min-height:46px!important;
+}
+
+/* cart item full display */
+.cart-item,
+.cart-row{
+  align-items:flex-start!important;
+}
+.cart-item .cart-name,
+.cart-row .cart-name,
+.cart-item .item-name,
+.cart-row .item-name,
+.cart-title,
+.cart-product-name{
+  white-space:normal!important;
+  overflow:visible!important;
+  text-overflow:clip!important;
+  word-break:break-word!important;
+  line-height:1.35!important;
+}
+.cart-item .cart-main,
+.cart-row .cart-main{
+  min-width:0!important;
 }
 
 </style>
@@ -2716,7 +2782,14 @@ function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;',
   };
   window.closeVoiceOrderModal=function(){if(voiceRecording)stopHoldRecording();stopVoiceTracks();closeModal('modalVoiceOrder');};
   window.clearVoiceOrder=function(){const text=V$('voiceText');if(text)text.value='';renderVoiceResults([]);const status=V$('voiceStatus');if(status){status.classList.remove('listening');status.textContent=vMsg('已清空。','クリアしました。');}};
-  window.parseVoiceTextFromInput=function(){const el=V$('voiceText');const text=cleanVoiceAsrText(el?.value||'');if(el)el.value=text;renderVoiceResults(parseVoiceText(text));};
+  
+  const __renderVoiceResultsOriginalV45 = renderVoiceResults;
+  renderVoiceResults = function(items){
+    __renderVoiceResultsOriginalV45(items);
+    setTimeout(beautifyVoiceResultCardsV45, 0);
+  };
+
+window.parseVoiceTextFromInput=function(){const el=V$('voiceText');const text=cleanVoiceAsrText(el?.value||'');if(el)el.value=text;renderVoiceResults(parseVoiceText(text));};
   window.removeVoiceItem=function(i){voiceParsedItems.splice(i,1);renderVoiceResults(voiceParsedItems);};
   
   function sortCartByVoiceOrderV44(){
@@ -2738,7 +2811,112 @@ function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;',
     }catch(e){}
   }
 
-window.addVoiceItemsToCart=function(){const rows=[...document.querySelectorAll('.voice-result-item')];if(!rows.length){alert(vMsg('请先语音识别或解析文字','先に音声認識または文字解析をしてください'));return;}const keepY=window.scrollY||document.documentElement.scrollTop||0;const cart=typeof getCart==='function'?getCart():[];let added=0;rows.forEach(row=>{const sel=row.querySelector('.voice-result-select');const qtyEl=row.querySelector('.voice-qty-input');const pid=sel?.value;const qty=Math.max(1,parseInt(qtyEl?.value||'1',10)||1);const p=(allProducts||[]).find(x=>String(x.id)===String(pid));if(!p)return;const idx=cart.findIndex(c=>String(c.product_id)===String(p.id));if(idx>=0)cart[idx].qty=Number(cart[idx].qty||0)+qty;else cart.push({product_id:p.id,qty,product_name:p.name,product_name_zh:p.name_zh||'',product_spec:p.spec,product_emoji:'',unit_price:p.price,tax_rate:p.tax_rate});added+=qty;});if(!added){alert(vMsg('没有可加入的商品','追加できる商品がありません'));return;}if(typeof setCart==='function')setCart(cart);if(typeof renderProducts==='function')renderProducts();if(typeof renderCart==='function')renderCart({keepOpen:false});if(typeof updateCartBadge==='function')updateCartBadge();/* V41 clear after add voice cart */try{voiceParsedItems=[];}catch(e){}if(V$('voiceText'))V$('voiceText').value='';try{renderVoiceResults([]);}catch(e){}sortCartByVoiceOrderV44();try{renderCart();}catch(e){}closeVoiceOrderModal();requestAnimationFrame(()=>window.scrollTo(0,keepY));alert(vMsg(`已加入购物车：${added}件`,`カートに追加しました：${added}点`));};
+
+  function getVoiceOrderIdListV45(){
+    try{
+      if(!Array.isArray(voiceParsedItems)) return [];
+      return voiceParsedItems.map(it=>String(it.productId || it.id || '')).filter(Boolean);
+    }catch(e){return [];}
+  }
+
+  function sortCartByVoiceOrderV45(){
+    try{
+      if(!Array.isArray(cart)) return;
+      const ids = getVoiceOrderIdListV45();
+      if(!ids.length) return;
+      const orderMap = new Map();
+      ids.forEach((id,i)=>{ if(id && !orderMap.has(id)) orderMap.set(id,i); });
+      cart.sort((a,b)=>{
+        const aid = String(a.id || a.product_id || a.productId || '');
+        const bid = String(b.id || b.product_id || b.productId || '');
+        const ai = orderMap.has(aid) ? orderMap.get(aid) : 999999;
+        const bi = orderMap.has(bid) ? orderMap.get(bid) : 999999;
+        return ai - bi;
+      });
+    }catch(e){}
+  }
+
+  function beautifyVoiceResultCardsV45(){
+    try{
+      const wrap = V$('voiceResultWrap') || V$('voiceResults') || V$('voiceResult');
+      if(!wrap) return;
+      wrap.querySelectorAll('.voice-item').forEach(card=>{
+        // Remove "识别：xxx" / "認識：xxx" text rows if present
+        Array.from(card.querySelectorAll('*')).forEach(el=>{
+          const t=(el.textContent||'').trim();
+          if(/^识别[:：]/.test(t) || /^認識[:：]/.test(t)){
+            el.style.display='none';
+          }
+        });
+
+        const select = card.querySelector('select');
+        const input = card.querySelector('input[type="number"]');
+        const btn = card.querySelector('button');
+        if(select && input){
+          let row1 = card.querySelector('.v45-voice-name-row');
+          let row2 = card.querySelector('.v45-voice-qty-row');
+          if(!row1){
+            row1=document.createElement('div');
+            row1.className='v45-voice-name-row';
+            row1.style.display='grid';
+            row1.style.gridTemplateColumns='minmax(0,1fr) 48px';
+            row1.style.gap='10px';
+            row1.style.alignItems='center';
+            row1.style.marginBottom='10px';
+
+            row2=document.createElement('div');
+            row2.className='v45-voice-qty-row';
+            row2.style.display='flex';
+            row2.style.alignItems='center';
+            row2.style.gap='10px';
+
+            const label=document.createElement('span');
+            label.textContent=vMsg('数量','数量');
+            label.style.fontSize='14px';
+            label.style.color='#94a3b8';
+            label.style.fontWeight='800';
+
+            card.insertBefore(row1, card.firstChild);
+            card.insertBefore(row2, row1.nextSibling);
+            row1.appendChild(select);
+            if(btn) row1.appendChild(btn);
+            row2.appendChild(label);
+            row2.appendChild(input);
+          }
+        }
+      });
+    }catch(e){}
+  }
+
+  function beautifyCartFullNamesV45(){
+    try{
+      const cartRoot = V$('cartList') || V$('cartItems') || document.querySelector('.cart-list') || document.querySelector('.cart-body');
+      if(!cartRoot) return;
+      cartRoot.querySelectorAll('*').forEach(el=>{
+        const cls = String(el.className || '');
+        if(/name|title|product/i.test(cls)){
+          el.style.whiteSpace='normal';
+          el.style.overflow='visible';
+          el.style.textOverflow='clip';
+          el.style.wordBreak='break-word';
+          el.style.lineHeight='1.35';
+        }
+      });
+    }catch(e){}
+  }
+
+
+  if(typeof renderCart === 'function' && !window.__renderCartWrappedV45){
+    window.__renderCartWrappedV45 = true;
+    const __renderCartOriginalV45 = renderCart;
+    renderCart = function(){
+      const r = __renderCartOriginalV45.apply(this, arguments);
+      setTimeout(beautifyCartFullNamesV45, 0);
+      return r;
+    };
+  }
+
+window.addVoiceItemsToCart=function(){const rows=[...document.querySelectorAll('.voice-result-item')];if(!rows.length){alert(vMsg('请先语音识别或解析文字','先に音声認識または文字解析をしてください'));return;}const keepY=window.scrollY||document.documentElement.scrollTop||0;const cart=typeof getCart==='function'?getCart():[];let added=0;rows.forEach(row=>{const sel=row.querySelector('.voice-result-select');const qtyEl=row.querySelector('.voice-qty-input');const pid=sel?.value;const qty=Math.max(1,parseInt(qtyEl?.value||'1',10)||1);const p=(allProducts||[]).find(x=>String(x.id)===String(pid));if(!p)return;const idx=cart.findIndex(c=>String(c.product_id)===String(p.id));if(idx>=0)cart[idx].qty=Number(cart[idx].qty||0)+qty;else cart.push({product_id:p.id,qty,product_name:p.name,product_name_zh:p.name_zh||'',product_spec:p.spec,product_emoji:'',unit_price:p.price,tax_rate:p.tax_rate});added+=qty;});if(!added){alert(vMsg('没有可加入的商品','追加できる商品がありません'));return;}if(typeof setCart==='function')setCart(cart);if(typeof renderProducts==='function')renderProducts();if(typeof renderCart==='function')renderCart({keepOpen:false});if(typeof updateCartBadge==='function')updateCartBadge();/* V41 clear after add voice cart */try{voiceParsedItems=[];}catch(e){}if(V$('voiceText'))V$('voiceText').value='';try{renderVoiceResults([]);}catch(e){}sortCartByVoiceOrderV44();try{sortCartByVoiceOrderV45();renderCart();setTimeout(beautifyCartFullNamesV45,30);}catch(e){}closeVoiceOrderModal();requestAnimationFrame(()=>window.scrollTo(0,keepY));alert(vMsg(`已加入购物车：${added}件`,`カートに追加しました：${added}点`));};
   window.addEventListener('load',()=>setTimeout(bindHoldButton,500));
 })();
 
