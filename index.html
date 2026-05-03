@@ -3,8 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<!-- V38 fixed voice modal reset, no code leak -->
-<!-- V39 voice modal force reset -->
+<!-- V41 clean no leak real reset -->
 <title>受発注システム / 订货系统 - PRO UI v13</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1584,302 +1583,51 @@ async function deleteShop(id,name){const msg=currentLang==='zh'?`确定删除「
 async function populateInvoiceShop(){const{data}=await sb.from('users').select('id,name').eq('role','order').eq('active',true);const el=document.getElementById('invoiceShopSel');if(el)el.innerHTML='<option value="">全店舗 / 全部</option>'+(data||[]).map(u=>`<option value="${u.id}">${u.name}</option>`).join('');}
 async function addShop(){const id=document.getElementById('newShopId').value.trim();const name=document.getElementById('newShopName').value.trim();const pass=document.getElementById('newShopPass').value.trim();const addrEl=document.getElementById('newShopAddr');const addr=addrEl?addrEl.value.trim():'';if(!id||!name||!pass){alert(currentLang==='zh'?'请填写所有字段':'すべての項目を入力してください');return;}await sb.from('users').upsert({id,name,role:'order',password_hash:pass,address:addr,active:true});document.getElementById('newShopId').value='';document.getElementById('newShopName').value='';document.getElementById('newShopPass').value='';if(addrEl)addrEl.value='';loadShopList();populateInvoiceShop();alert(`店舗「${name}」を追加しました
 ID: ${id} / パスワード: ${pass}`);}
-async function genDeliveryPDF(orderId){const{data:order}=await sb.from('orders').select('*, order_items(*)').eq('id',orderId).single();if(!order)return;const shopName=displayName(order.shop_name)||order.shop_id;const si=statusInfo(order.status);const items=order.order_items||[];const note=(order.note||'').replace(/<[^>]*>/g,'').trim();const factNote=(order.factory_note||'').replace(/<[^>]*>/g,'').trim();const rows=items.map(item=>{const shortage=item.shortage?`<td style="color:#dc2626;font-weight:700;">欠品${item.shortage_note?' ('+item.shortage_note+')':''}</td>`:`<td style="color:#aaa;">—</td>`;return`<tr><td>${item.product_emoji||'📦'} ${item.product_name}</td><td>${item.product_spec}</td><td style="text-align:center;font-weight:700;font-size:15px;">${item.qty}</td><td style="text-align:right;">¥${Math.round(item.unit_price).toLocaleString()}</td><td style="text-align:center;">${item.tax_rate}%</td><td style="text-align:right;font-weight:700;">¥${Math.round(item.unit_price*item.qty).toLocaleString()}</td>${shortage}</tr>`;}).join('');const html=`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>送り状 #${order.order_no}</title><style>@media print{body{margin:0}button{display:none!important}}body{font-family:'Noto Sans JP','Hiragino Sans',sans-serif;font-size:13px;color:#1a1a1a;padding:28px;max-width:820px;margin:0 auto;}.print-btn{position:fixed;top:16px;right:16px;padding:10px 22px;background:#2563EB;color:white;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;}h1{font-size:24px;font-weight:900;text-align:center;letter-spacing:.08em;margin:0 0 6px;}.blue-line{height:3px;background:#2563EB;border-radius:2px;margin-bottom:22px;}.meta{display:grid;grid-template-columns:1fr 1fr;gap:4px 32px;margin-bottom:20px;}.meta-row{font-size:13px;display:flex;gap:8px;}.meta-row .k{color:#666;min-width:60px;}.meta-row .v{font-weight:600;}table{width:100%;border-collapse:collapse;margin-bottom:18px;}th{background:#f1f3f5;padding:9px 12px;text-align:left;font-size:12px;font-weight:700;color:#444;border-bottom:2px solid #dee2e6;}td{padding:10px 12px;border-bottom:1px solid #f1f3f5;font-size:13px;}.totals{margin-left:auto;width:280px;}.totals table{margin:0;}.totals td{padding:5px 10px;}.totals .grand{font-size:17px;font-weight:900;color:#2563EB;border-top:2px solid #dee2e6;padding-top:8px;}.sign-area{margin-top:28px;display:grid;grid-template-columns:1fr 1fr;gap:24px;}.sign-box{border-top:2px solid #333;padding-top:7px;font-size:12px;color:#666;}.footer{text-align:center;font-size:11px;color:#bbb;margin-top:36px;}
-
-/* ===== 2026-04 mobile fix v3: 商品分类标签吸顶固定 ===== */
-@media (max-width: 800px) {
-  #page-order #catTabWrap {
-    position: sticky;
-    top: 56px; /* 顶部蓝色导航栏高度，如有遮挡可调成 52px 或 60px */
-    z-index: 860;
-    background: rgba(248, 249, 250, 0.96);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    padding-top: 10px;
-    padding-bottom: 10px;
-    margin-bottom: 14px;
-    border-bottom: 1px solid rgba(0,0,0,.06);
-  }
-
-  #page-order #catTabInner {
-    padding-left: 4px;
-    padding-right: 4px;
-  }
+async function genDeliveryPDF(orderId){
+  sb.from('orders').select('*, order_items(*)').eq('id',orderId).single().then(({data:order})=>{
+    if(!order){ alert(currentLang==='zh'?'未找到订单':'注文が見つかりません'); return; }
+    const shopName=displayName(order.shop_name)||order.shop_id||'';
+    const items=(order.order_items||[]).map(item=>{
+      const name=item.product_name||'';
+      const spec=item.product_spec||'';
+      const qty=item.qty||0;
+      const price=Math.round(item.unit_price||0).toLocaleString();
+      const line=Math.round((item.unit_price||0)*(item.qty||0)).toLocaleString();
+      return '<tr>'+
+        '<td>'+escapeHtml(name)+'</td>'+
+        '<td>'+escapeHtml(spec)+'</td>'+
+        '<td style="text-align:center;font-weight:700;">'+qty+'</td>'+
+        '<td style="text-align:right;">¥'+price+'</td>'+
+        '<td style="text-align:right;font-weight:700;">¥'+line+'</td>'+
+      '</tr>';
+    }).join('');
+    const html='<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>送り状</title>'+
+      '<style>'+
+      '@media print{button{display:none!important}body{margin:0}}'+
+      'body{font-family:-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;padding:24px;color:#111;}'+
+      '.print-btn{position:fixed;top:12px;right:12px;padding:10px 18px;background:#2563eb;color:#fff;border:0;border-radius:8px;font-weight:700;}'+
+      'h1{font-size:24px;margin:0 0 14px}.meta{margin:8px 0;color:#555}.box{border:1px solid #ddd;border-radius:12px;padding:16px;margin:14px 0}'+
+      'table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border-bottom:1px solid #eee;padding:9px;text-align:left}th{background:#f6f7fb}'+
+      '.total{text-align:right;font-size:22px;font-weight:800;margin-top:18px}'+
+      '</style></head><body>'+
+      '<button class="print-btn" onclick="window.print()">印刷</button>'+
+      '<h1>送り状 / 送货单</h1>'+
+      '<div class="box">'+
+      '<div class="meta">注文番号：'+escapeHtml(order.order_no||'')+'</div>'+
+      '<div class="meta">店舗：'+escapeHtml(shopName)+'</div>'+
+      '<div class="meta">日時：'+escapeHtml(order.order_date||'')+'</div>'+
+      '<div class="meta">備考：'+escapeHtml(order.note||'')+'</div>'+
+      '</div>'+
+      '<table><thead><tr><th>商品</th><th>規格</th><th>数量</th><th>単価</th><th>金額</th></tr></thead><tbody>'+items+'</tbody></table>'+
+      '<div class="total">合計：¥'+Math.round(order.total||0).toLocaleString()+'</div>'+
+      '</body></html>';
+    const w=window.open('','_blank','width=920,height=720,scrollbars=yes');
+    if(!w){alert('ポップアップをブロックされています。');return;}
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  });
 }
-
-@media (max-width: 480px) {
-  #page-order #catTabWrap {
-    top: 50px; /* 小屏幕导航栏稍低，避免分类被导航栏挡住 */
-  }
-}
-
-</style></head><body><button class="print-btn" onclick="window.print()">🖨️ 印刷 / PDF保存</button><h1>送 り 状</h1><div class="blue-line"></div><div class="meta"><div class="meta-row"><span class="k">注文番号</span><span class="v">#${order.order_no}</span></div><div class="meta-row"><span class="k">発行日時</span><span class="v">${new Date().toLocaleString('ja-JP')}</span></div><div class="meta-row"><span class="k">店舗</span><span class="v">${shopName}</span></div><div class="meta-row"><span class="k">注文日</span><span class="v">${order.order_date}</span></div><div class="meta-row"><span class="k">ステータス</span><span class="v">${si.ja}</span></div></div>${note?`<div style="padding:8px 12px;border-radius:4px;margin-bottom:16px;font-size:13px;background:#eff6ff;border-left:4px solid #2563EB;">📝 備考：${note}</div>`:''} ${factNote?`<div style="padding:8px 12px;border-radius:4px;margin-bottom:16px;font-size:13px;background:#fffbeb;border-left:4px solid #f59e0b;">🏭 工場メモ：${factNote}</div>`:''}<table><thead><tr><th>商品名</th><th>規格</th><th style="text-align:center;">数量</th><th style="text-align:right;">単価</th><th style="text-align:center;">税率</th><th style="text-align:right;">金額</th><th>欠品</th></tr></thead><tbody>${rows}</tbody></table><div class="totals"><table><tr><td style="color:#666;">小計（税抜）</td><td style="text-align:right;">¥${Math.round(order.subtotal||0).toLocaleString()}</td></tr><tr><td style="color:#666;">消費税</td><td style="text-align:right;">¥${Math.round(order.tax_total||0).toLocaleString()}</td></tr><tr><td class="grand">合計（税込）</td><td class="grand" style="text-align:right;">¥${Math.round(order.total||0).toLocaleString()}</td></tr></table></div><div class="sign-area"><div class="sign-box">受取確認サイン</div><div class="sign-box">受取日：　　　年　　月　　日</div></div><div class="footer">受発注システム — 送り状 #${order.order_no} — ${new Date().toLocaleString('ja-JP')}</div>
-<!-- ===== v13 stable patch: cutoff sync + category centering ===== -->
-<style>
-@media (max-width:800px){
-  #page-order #catTabWrap.cat-fixed{
-    position:fixed !important;
-    top:var(--nav-h, 0px) !important;
-    left:0 !important;
-    right:0 !important;
-    width:100vw !important;
-    max-width:100vw !important;
-    z-index:4800 !important;
-    margin:0 !important;
-    padding:10px 12px 12px !important;
-    background:rgba(248,249,250,.98) !important;
-    border-bottom:1px solid rgba(0,0,0,.08) !important;
-    box-shadow:0 4px 18px rgba(0,0,0,.08) !important;
-    backdrop-filter:blur(8px) !important;
-    -webkit-backdrop-filter:blur(8px) !important;
-  }
-  #page-order #catTabInner{scroll-behavior:smooth;}
-}
-</style>
-<script>
-(function(){
-  const $ = (id)=>document.getElementById(id);
-  function setNavHeightVarV13(){
-    const nav=document.querySelector('.top-nav');
-    const h=nav && nav.offsetParent!==null ? nav.offsetHeight : 0;
-    document.documentElement.style.setProperty('--nav-h', h + 'px');
-    document.body.style.setProperty('--nav-h', h + 'px');
-    return h;
-  }
-  function centerCategoryButtonV13(btn){
-    if(!btn) return;
-    const wrap=$('catTabWrap');
-    const scroller = wrap || btn.parentElement;
-    if(!scroller) return;
-    requestAnimationFrame(()=>{
-      try{
-        const wrapRect=scroller.getBoundingClientRect();
-        const btnRect=btn.getBoundingClientRect();
-        const current=scroller.scrollLeft || 0;
-        const delta=(btnRect.left - wrapRect.left) - (wrapRect.width - btnRect.width)/2;
-        scroller.scrollTo({left: Math.max(0,current + delta), behavior:'smooth'});
-      }catch(e){try{btn.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});}catch(_e){}}
-    });
-  }
-  window.centerCategoryButtonV13=centerCategoryButtonV13;
-  function ensureCategoryPlaceholderV13(){
-    const cat=$('catTabWrap');
-    if(!cat) return null;
-    let ph=$('catStickyPlaceholder');
-    if(!ph){ph=document.createElement('div');ph.id='catStickyPlaceholder';cat.parentNode.insertBefore(ph,cat.nextSibling);}
-    return ph;
-  }
-  window.ensureCategoryPlaceholder=ensureCategoryPlaceholderV13;
-  window.resetCategoryFixed=function(){
-    const cat=$('catTabWrap'); const ph=$('catStickyPlaceholder');
-    if(cat) cat.classList.remove('cat-fixed');
-    if(ph){ph.style.display='none';ph.style.height='0px';}
-    window.catFixedReady=false;
-  };
-  window.setupCategoryFixed=function(){
-    const cat=$('catTabWrap'); const page=$('page-order');
-    if(!cat || !page || !page.classList.contains('active')) return;
-    const navH=setNavHeightVarV13();
-    if(window.innerWidth>800){window.resetCategoryFixed();return;}
-    const ph=ensureCategoryPlaceholderV13();
-    cat.classList.remove('cat-fixed');
-    if(ph){ph.style.display='none';ph.style.height='0px';}
-    const rect=cat.getBoundingClientRect();
-    window.catFixedStartY=(window.scrollY||document.documentElement.scrollTop||0)+rect.top-navH;
-    window.catFixedReady=true;
-    window.updateCategoryFixed();
-  };
-  window.updateCategoryFixed=function(){
-    const cat=$('catTabWrap'); const page=$('page-order'); const ph=ensureCategoryPlaceholderV13();
-    if(!cat || !page || !ph) return;
-    const navH=setNavHeightVarV13();
-    if(window.innerWidth>800 || !page.classList.contains('active')){window.resetCategoryFixed();return;}
-    if(!window.catFixedReady){window.setupCategoryFixed();return;}
-    const y=window.scrollY||document.documentElement.scrollTop||0;
-    if(y>=window.catFixedStartY){
-      if(!cat.classList.contains('cat-fixed')){ph.style.height=cat.offsetHeight+'px';ph.style.display='block';cat.classList.add('cat-fixed');}
-      cat.style.top=navH+'px';
-    }else{cat.classList.remove('cat-fixed');ph.style.display='none';ph.style.height='0px';}
-  };
-  window.filterProductsCat=function(v,btnEl){
-    catFilter=v;
-    document.querySelectorAll('.cat-tab-btn').forEach(b=>b.classList.remove('active'));
-    if(btnEl){btnEl.classList.add('active');centerCategoryButtonV13(btnEl);}
-    const grid=$('productGrid');
-    if(grid){grid.classList.remove('sliding');void grid.offsetWidth;grid.classList.add('sliding');setTimeout(()=>grid.classList.remove('sliding'),320);}
-    if(typeof window.renderProducts==='function') window.renderProducts();
-    requestAnimationFrame(()=>{window.setupCategoryFixed&&window.setupCategoryFixed();window.updateCategoryFixed&&window.updateCategoryFixed();if(btnEl) centerCategoryButtonV13(btnEl);});
-  };
-  const originalOnTabActivate = window.onTabActivate;
-  window.onTabActivate = async function(id){
-    if(id==='order'){
-      try{if(typeof loadCutoffSetting==='function') await loadCutoffSetting();}catch(e){}
-      if(typeof loadProducts==='function') await loadProducts();
-      if(typeof renderCutoffBanner==='function') renderCutoffBanner();
-      if(typeof checkReceiptRequired==='function') checkReceiptRequired();
-      cartDrawerOpen=false; const p=$('cartPanel'); if(p)p.classList.remove('cart-open');
-      setTimeout(()=>{window.setupCategoryFixed&&window.setupCategoryFixed();},200);
-      return;
-    }
-    if(typeof originalOnTabActivate === 'function') return originalOnTabActivate.apply(this,arguments);
-  };
-  const originalInitMainUI = window.initMainUI;
-  window.initMainUI = async function(){
-    try{if(typeof loadCutoffSetting==='function') await loadCutoffSetting();}catch(e){}
-    if(typeof originalInitMainUI === 'function') return originalInitMainUI.apply(this,arguments);
-  };
-  window.addEventListener('scroll',()=>requestAnimationFrame(()=>window.updateCategoryFixed&&window.updateCategoryFixed()),{passive:true});
-  window.addEventListener('resize',()=>setTimeout(()=>{setNavHeightVarV13();window.setupCategoryFixed&&window.setupCategoryFixed();},180));
-  window.addEventListener('orientationchange',()=>setTimeout(()=>{setNavHeightVarV13();window.setupCategoryFixed&&window.setupCategoryFixed();},450));
-  window.addEventListener('load',()=>setTimeout(()=>{setNavHeightVarV13();window.setupCategoryFixed&&window.setupCategoryFixed();},900));
-})();
-<\/script>
-
-
-<script>
-/* ===== V14 修正：商品详情弹窗只显示税抜价格 ===== */
-(function(){
-  function installOpenTapPriceFix(){
-    const originalOpenTap = window.openTap;
-    window.openTap = function(pid){
-      if (typeof originalOpenTap === 'function') originalOpenTap(pid);
-      try {
-        const list = window.allProducts || (typeof allProducts !== 'undefined' ? allProducts : []);
-        const p = list.find(x => String(x.id) === String(pid));
-        const priceEl = document.getElementById('tapPrice');
-        if (p && priceEl) priceEl.textContent = fmt(Number(p.price || 0)) + '（税抜）';
-      } catch(e) {}
-    };
-  }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installOpenTapPriceFix);
-  else installOpenTapPriceFix();
-})();
-<\/script>
-
-<script>
-/* V39: force clear voice modal every time it opens */
-(function(){
-  let lastVisible = false;
-  let resetLock = false;
-
-  function q(id){ return document.getElementById(id); }
-
-  function isVisible(el){
-    if(!el) return false;
-    const st = window.getComputedStyle(el);
-    return st.display !== 'none' && st.visibility !== 'hidden' && st.opacity !== '0' && el.offsetWidth > 0 && el.offsetHeight > 0;
-  }
-
-  function clearVoiceState(){
-    if(resetLock) return;
-    resetLock = true;
-
-    const textIds = ['voiceText','voiceInput','voiceTextarea'];
-    textIds.forEach(function(id){
-      const el = q(id);
-      if(el) el.value = '';
-    });
-
-    const status = q('voiceStatus');
-    if(status){
-      status.textContent = '';
-      status.innerHTML = '';
-      status.className = status.className || 'voice-status';
-    }
-
-    const resultIds = ['voiceResults','voiceResult','voiceList','voiceItems','voiceMatchedList'];
-    resultIds.forEach(function(id){
-      const el = q(id);
-      if(el) el.innerHTML = '';
-    });
-
-    const addBtn = q('voiceAddBtn') || q('addVoiceCartBtn') || q('voiceConfirmBtn');
-    if(addBtn) addBtn.disabled = true;
-
-    // Clear common global arrays/state used by voice matching if present.
-    try {
-      window.voiceParsedItems = [];
-      window.voiceResults = [];
-      window.voiceMatchedItems = [];
-      window.currentVoiceItems = [];
-    } catch(e){}
-
-    const modal = q('voiceModal');
-    const scrollTargets = [
-      modal,
-      modal && modal.querySelector('.voice-panel'),
-      modal && modal.querySelector('.voice-modal'),
-      modal && modal.querySelector('.voice-box'),
-      modal && modal.querySelector('.voice-content'),
-      modal && modal.querySelector('.modal-body'),
-      document.querySelector('.voice-modal-body')
-    ].filter(Boolean);
-
-    scrollTargets.forEach(function(el){
-      try {
-        if(typeof el.scrollTo === 'function') el.scrollTo({top:0,left:0,behavior:'auto'});
-        else el.scrollTop = 0;
-      } catch(e){}
-    });
-
-    setTimeout(function(){
-      scrollTargets.forEach(function(el){
-        try {
-          if(typeof el.scrollTo === 'function') el.scrollTo({top:0,left:0,behavior:'auto'});
-          else el.scrollTop = 0;
-        } catch(e){}
-      });
-      resetLock = false;
-    }, 80);
-  }
-
-  function checkVoiceModalOpen(){
-    const modal = q('voiceModal');
-    const visible = isVisible(modal);
-    if(visible && !lastVisible){
-      clearVoiceState();
-    }
-    lastVisible = visible;
-  }
-
-  function install(){
-    const modal = q('voiceModal');
-
-    // Watch modal style/class changes.
-    if(modal && !modal.__v39VoiceObserver){
-      modal.__v39VoiceObserver = true;
-      const obs = new MutationObserver(checkVoiceModalOpen);
-      obs.observe(modal, {attributes:true, attributeFilter:['style','class','open','aria-hidden']});
-    }
-
-    // Also catch voice button clicks before old content is shown.
-    document.addEventListener('click', function(e){
-      const el = e.target && e.target.closest ? e.target.closest('button,a,div,span') : null;
-      if(!el) return;
-      const txt = (el.innerText || el.textContent || '').trim();
-      const meta = ((el.id || '') + ' ' + (el.className || '') + ' ' + (el.getAttribute('onclick') || '')).toLowerCase();
-      if(txt.indexOf('语音') >= 0 || txt.indexOf('音声') >= 0 || meta.indexOf('voice') >= 0){
-        setTimeout(clearVoiceState, 0);
-        setTimeout(function(){
-          lastVisible = false;
-          checkVoiceModalOpen();
-        }, 120);
-      }
-    }, true);
-
-    // Poll lightly for pages where modal is opened without attribute mutation.
-    setInterval(checkVoiceModalOpen, 300);
-  }
-
-  if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', install);
-  } else {
-    install();
-  }
-})();
-</script>
-
-</body></html>`;const w=window.open('','_blank','width=920,height=720,scrollbars=yes');if(!w){alert('ポップアップをブロックされています。');return;}w.document.write(html);w.document.close();}
 
 async function generateInvoicePDF(){const month=document.getElementById('invoiceMonth').value;const shopId=document.getElementById('invoiceShopSel').value;if(!month){alert(currentLang==='zh'?'请选择月份':'月を選択してください');return;}showLoading(currentLang==='zh'?'生成PDF...':'PDF生成中...');let query=sb.from('orders').select('*, order_items(*)').gte('order_date',month+'-01').lte('order_date',month+'-31').eq('receipt_confirmed',true);if(shopId)query=query.eq('shop_id',shopId);const{data:orders}=await query.order('order_date');hideLoading();if(!orders||!orders.length){alert(currentLang==='zh'?'没有已确认的订单':'確認済み注文がありません');return;}const{jsPDF}=window.jspdf;const doc=new jsPDF({unit:'mm',format:'a4'});const shops=[...new Set(orders.map(o=>o.shop_id))];let first=true;shops.forEach(sid=>{const shopOrders=orders.filter(o=>o.shop_id===sid);if(!shopOrders.length)return;if(!first)doc.addPage();first=false;const shopName=shopOrders[0].shop_name;const totalAmt=shopOrders.reduce((a,o)=>a+(o.total||0),0);const taxAmt=shopOrders.reduce((a,o)=>a+(o.tax_total||0),0);const shopDisplayInv=pdfShopNameWithId(shopName,shopOrders[0]?.shop_id);doc.setFontSize(20);doc.setFont('helvetica','bold');doc.text('INVOICE',105,18,{align:'center'});doc.setDrawColor(37,99,235);doc.setLineWidth(0.8);doc.line(20,22,190,22);doc.setFontSize(10);doc.setFont('helvetica','normal');doc.text(`To: ${shopDisplayInv}`,20,30);doc.text(`Period: ${month}`,20,37);doc.text(`Orders: ${shopOrders.length}`,20,44);doc.text(`Issued: ${new Date().toLocaleDateString('ja-JP')}`,130,30);doc.line(20,50,190,50);let y=58;doc.setFont('helvetica','bold');doc.setFontSize(9);doc.text('Date',20,y);doc.text('Order#',50,y);doc.text('Items',85,y);doc.text('Subtotal',115,y,{align:'right'});doc.text('Tax',140,y,{align:'right'});doc.text('Total',175,y,{align:'right'});doc.line(20,y+2,190,y+2);y+=9;doc.setFont('helvetica','normal');shopOrders.forEach(o=>{doc.text(o.order_date,20,y);doc.text('#'+o.order_no,50,y);doc.text(String(o.order_items?.length||''),85,y);doc.text('Y'+(o.subtotal||0).toLocaleString(),115,y,{align:'right'});doc.text('Y'+(o.tax_total||0).toLocaleString(),140,y,{align:'right'});doc.text('Y'+(o.total||0).toLocaleString(),175,y,{align:'right'});y+=8;});doc.line(20,y,190,y);y+=8;doc.setFont('helvetica','bold');doc.setFontSize(11);doc.text('GRAND TOTAL (incl. tax):',80,y);doc.text('Y'+Math.round(totalAmt).toLocaleString(),175,y,{align:'right'});});doc.save(`invoice_${month}${shopId?'_'+shopId:''}.pdf`);}
 
@@ -2725,6 +2473,7 @@ document.addEventListener('focusin',function(e){
   function vSafe(x){return String(x??'').replace(/[&<>"']/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];});}
   function vNorm(s){return String(s||'').toLowerCase().replace(/[\s　・,，、。\.\/／\-ー_（）()\[\]【】]/g,'');}
   function vMsg(zh,ja){return currentLang==='zh'?zh:ja;}
+function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 
   // V36: 清理 ASR 多余口语词 / 错听词，避免“儿、啊、然后”等进入解析
   function cleanVoiceAsrText(input){
@@ -2821,36 +2570,7 @@ document.addEventListener('focusin',function(e){
 
   function findCandidates(raw){const text=vNorm(raw);const scored=[];(allProducts||[]).forEach(p=>{if(!p.active||Number(p.stock)<=0)return;let score=0;for(const a of productAliases(p)){const na=vNorm(a);if(!na)continue;if(text.includes(na))score=Math.max(score,100+na.length);else if(na.includes(text)&&text.length>=2)score=Math.max(score,70+text.length);}if(score>0)scored.push({product:p,score});});scored.sort((a,b)=>b.score-a.score);return scored.slice(0,6).map(x=>x.product);}
 
-  
-  // V38: 每次打开语音订货时清空上一次识别结果，并把弹窗回到顶部
-  function resetVoiceModalState(){
-    const textEl = V$('voiceText');
-    if(textEl) textEl.value = '';
-
-    const statusEl = V$('voiceStatus');
-    if(statusEl){
-      statusEl.textContent = '';
-      statusEl.className = 'voice-status';
-    }
-
-    const resultsEl = V$('voiceResults');
-    if(resultsEl) resultsEl.innerHTML = '';
-
-    const addBtn = V$('voiceAddBtn');
-    if(addBtn) addBtn.disabled = true;
-
-    const modal = V$('voiceModal');
-    const body = document.querySelector('#voiceModal .voice-panel, #voiceModal .voice-modal, #voiceModal .voice-box, #voiceModal .modal-body, #voiceModal');
-    if(body && body.scrollTo) body.scrollTo({top:0, behavior:'auto'});
-    if(modal && modal.scrollTo) modal.scrollTo({top:0, behavior:'auto'});
-
-    setTimeout(()=>{
-      const body2 = document.querySelector('#voiceModal .voice-panel, #voiceModal .voice-modal, #voiceModal .voice-box, #voiceModal .modal-body, #voiceModal');
-      if(body2 && body2.scrollTo) body2.scrollTo({top:0, behavior:'auto'});
-    }, 50);
-  }
-
-function parseVoiceText(text){
+  function parseVoiceText(text){
     text=cleanVoiceAsrText(text);
     if(!text)return [];
     const results=[];
@@ -2899,139 +2619,62 @@ function parseVoiceText(text){
   async function finishHoldRecording(){const chunks=voicePcmChunks.slice();const inputRate=voiceInputSampleRate||16000;stopVoiceTracks();voicePcmChunks=[];if(!chunks.length){setVoiceStatus(vMsg('没有录到声音，请再试一次。','音声が録音されませんでした。もう一度お試しください。'),false);return;}const blob=encodeWavFromFloatChunks(chunks,inputRate,16000);try{const rawText=await transcribeWithEndpoint(blob,'audio/wav');const clean=cleanVoiceAsrText(rawText);if(!clean){setVoiceStatus(vMsg('火山引擎没有返回有效商品文字，请再说清楚一点。','火山引擎から有効な商品文字が返りませんでした。もう一度はっきり話してください。'),false);return;}const textEl=V$('voiceText');if(textEl)textEl.value=clean;const items=parseVoiceText(clean);renderVoiceResults(items);setVoiceStatus(vMsg('识别完成，已自动清理多余口语：','認識完了、不要な口語を自動整理しました：')+clean,false);}catch(err){setVoiceStatus(vMsg('火山引擎识别失败：','火山引擎認識に失敗しました：')+(err?.message||err),false);}}
   async function transcribeWithEndpoint(blob,mime){const endpoint=getVoiceEndpoint();const fd=new FormData();fd.append('audio',blob,'voice_order.wav');fd.append('audio_format','wav');fd.append('sample_rate','16000');fd.append('language',currentLang==='zh'?'zh':'ja');const names=(allProducts||[]).filter(p=>p.active).slice(0,120).map(p=>[p.name,p.name_zh].filter(Boolean).join('/')).join('、');fd.append('product_hint',names);const res=await fetch(endpoint,{method:'POST',body:fd});const txt=await res.text();let data=null;try{data=JSON.parse(txt);}catch(_e){data={text:txt};}if(!res.ok){throw new Error(data?.error||data?.message||txt||('HTTP '+res.status));}return data.text||data.transcript||'';}
   function bindHoldButton(){const btn=V$('voiceHoldBtn');if(!btn||btn.dataset.bound==='1')return;btn.dataset.bound='1';btn.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();if(voiceRecording)stopHoldRecording(e);else startHoldRecording(e);});btn.addEventListener('touchstart',function(e){e.stopPropagation();},{passive:true});btn.addEventListener('contextmenu',e=>e.preventDefault());}
-  window.openVoiceOrderModal=function(){const text=V$('voiceText');const status=V$('voiceStatus');const endpoint=V$('voiceApiEndpoint');if(endpoint)endpoint.value=localStorage.getItem('fos_voiceApiEndpoint')||'/api/transcribe-volc';if(text&&!text.value)text.value='';if(status){status.classList.remove('listening');status.textContent=vMsg('点一下开始录音，说完后再点一下识别。系统会用中日文智能别名匹配商品。','1回押すと録音開始、もう1回押すと認識します。不要な口語を整理して商品候補を探します。');}const btn=V$('voiceHoldBtn');if(btn){btn.classList.remove('recording');btn.innerHTML='🎙 <span class="ja">録音開始</span><span class="zh">开始录音</span>';}renderVoiceResults([]);openModal('modalVoiceOrder');setTimeout(bindHoldButton,50);};
+  window.openVoiceOrderModal=function(){
+    try{ if(typeof voiceRecording!=='undefined' && voiceRecording && typeof stopHoldRecording==='function')stopHoldRecording(); }catch(e){}
+    try{ if(typeof stopVoiceTracks==='function')stopVoiceTracks(); }catch(e){}
+
+    const text=V$('voiceText');
+    const status=V$('voiceStatus');
+    const endpoint=V$('voiceApiEndpoint');
+    const btn=V$('voiceHoldBtn');
+    const timer=V$('voiceTimer');
+    const wrap=V$('voiceResultWrap');
+
+    if(endpoint)endpoint.value=localStorage.getItem('fos_voiceApiEndpoint')||'/api/transcribe-volc';
+
+    // V41: 每次进入语音订货，强制清空上一次识别内容和候选商品
+    if(text)text.value='';
+    try{ voiceParsedItems=[]; }catch(e){}
+
+    if(wrap){
+      wrap.innerHTML=`<div class="voice-empty">${vMsg('识别结果会显示在这里','認識結果がここに表示されます')}</div>`;
+    }else{
+      try{renderVoiceResults([]);}catch(e){}
+    }
+
+    if(status){
+      status.classList.remove('listening');
+      status.textContent=vMsg('点一下开始录音，说完后再点一下识别。系统会自动清理多余口语并匹配商品。','1回押すと録音開始、もう1回押すと認識します。不要な口語を整理して商品候補を探します。');
+    }
+
+    if(timer){
+      timer.innerHTML='<span class="ja">話し終わったらもう一度押して認識します</span><span class="zh">说完后再点一次，开始识别</span>';
+    }
+
+    if(btn){
+      btn.classList.remove('recording');
+      btn.disabled=false;
+      btn.innerHTML='🎙 <span class="ja">録音開始</span><span class="zh">开始录音</span>';
+    }
+
+    openModal('modalVoiceOrder');
+
+    setTimeout(()=>{
+      const modal=V$('modalVoiceOrder');
+      const panel=modal?modal.querySelector('.modal-card,.voice-panel,.voice-box,.modal-body'):null;
+      try{ if(modal)modal.scrollTop=0; }catch(e){}
+      try{ if(panel)panel.scrollTop=0; }catch(e){}
+      bindHoldButton();
+    },50);
+  };
   window.closeVoiceOrderModal=function(){if(voiceRecording)stopHoldRecording();stopVoiceTracks();closeModal('modalVoiceOrder');};
   window.clearVoiceOrder=function(){const text=V$('voiceText');if(text)text.value='';renderVoiceResults([]);const status=V$('voiceStatus');if(status){status.classList.remove('listening');status.textContent=vMsg('已清空。','クリアしました。');}};
   window.parseVoiceTextFromInput=function(){const el=V$('voiceText');const text=cleanVoiceAsrText(el?.value||'');if(el)el.value=text;renderVoiceResults(parseVoiceText(text));};
   window.removeVoiceItem=function(i){voiceParsedItems.splice(i,1);renderVoiceResults(voiceParsedItems);};
-  window.addVoiceItemsToCart=function(){const rows=[...document.querySelectorAll('.voice-result-item')];if(!rows.length){alert(vMsg('请先语音识别或解析文字','先に音声認識または文字解析をしてください'));return;}const keepY=window.scrollY||document.documentElement.scrollTop||0;const cart=typeof getCart==='function'?getCart():[];let added=0;rows.forEach(row=>{const sel=row.querySelector('.voice-result-select');const qtyEl=row.querySelector('.voice-qty-input');const pid=sel?.value;const qty=Math.max(1,parseInt(qtyEl?.value||'1',10)||1);const p=(allProducts||[]).find(x=>String(x.id)===String(pid));if(!p)return;const idx=cart.findIndex(c=>String(c.product_id)===String(p.id));if(idx>=0)cart[idx].qty=Number(cart[idx].qty||0)+qty;else cart.push({product_id:p.id,qty,product_name:p.name,product_name_zh:p.name_zh||'',product_spec:p.spec,product_emoji:'',unit_price:p.price,tax_rate:p.tax_rate});added+=qty;});if(!added){alert(vMsg('没有可加入的商品','追加できる商品がありません'));return;}if(typeof setCart==='function')setCart(cart);if(typeof renderProducts==='function')renderProducts();if(typeof renderCart==='function')renderCart({keepOpen:false});if(typeof updateCartBadge==='function')updateCartBadge();closeVoiceOrderModal();requestAnimationFrame(()=>window.scrollTo(0,keepY));alert(vMsg(`已加入购物车：${added}件`,`カートに追加しました：${added}点`));};
+  window.addVoiceItemsToCart=function(){const rows=[...document.querySelectorAll('.voice-result-item')];if(!rows.length){alert(vMsg('请先语音识别或解析文字','先に音声認識または文字解析をしてください'));return;}const keepY=window.scrollY||document.documentElement.scrollTop||0;const cart=typeof getCart==='function'?getCart():[];let added=0;rows.forEach(row=>{const sel=row.querySelector('.voice-result-select');const qtyEl=row.querySelector('.voice-qty-input');const pid=sel?.value;const qty=Math.max(1,parseInt(qtyEl?.value||'1',10)||1);const p=(allProducts||[]).find(x=>String(x.id)===String(pid));if(!p)return;const idx=cart.findIndex(c=>String(c.product_id)===String(p.id));if(idx>=0)cart[idx].qty=Number(cart[idx].qty||0)+qty;else cart.push({product_id:p.id,qty,product_name:p.name,product_name_zh:p.name_zh||'',product_spec:p.spec,product_emoji:'',unit_price:p.price,tax_rate:p.tax_rate});added+=qty;});if(!added){alert(vMsg('没有可加入的商品','追加できる商品がありません'));return;}if(typeof setCart==='function')setCart(cart);if(typeof renderProducts==='function')renderProducts();if(typeof renderCart==='function')renderCart({keepOpen:false});if(typeof updateCartBadge==='function')updateCartBadge();/* V41 clear after add voice cart */try{voiceParsedItems=[];}catch(e){}if(V$('voiceText'))V$('voiceText').value='';try{renderVoiceResults([]);}catch(e){}closeVoiceOrderModal();requestAnimationFrame(()=>window.scrollTo(0,keepY));alert(vMsg(`已加入购物车：${added}件`,`カートに追加しました：${added}点`));};
   window.addEventListener('load',()=>setTimeout(bindHoldButton,500));
 })();
 
 </script>
-
-<script>
-/* V39: force clear voice modal every time it opens */
-(function(){
-  let lastVisible = false;
-  let resetLock = false;
-
-  function q(id){ return document.getElementById(id); }
-
-  function isVisible(el){
-    if(!el) return false;
-    const st = window.getComputedStyle(el);
-    return st.display !== 'none' && st.visibility !== 'hidden' && st.opacity !== '0' && el.offsetWidth > 0 && el.offsetHeight > 0;
-  }
-
-  function clearVoiceState(){
-    if(resetLock) return;
-    resetLock = true;
-
-    const textIds = ['voiceText','voiceInput','voiceTextarea'];
-    textIds.forEach(function(id){
-      const el = q(id);
-      if(el) el.value = '';
-    });
-
-    const status = q('voiceStatus');
-    if(status){
-      status.textContent = '';
-      status.innerHTML = '';
-      status.className = status.className || 'voice-status';
-    }
-
-    const resultIds = ['voiceResults','voiceResult','voiceList','voiceItems','voiceMatchedList'];
-    resultIds.forEach(function(id){
-      const el = q(id);
-      if(el) el.innerHTML = '';
-    });
-
-    const addBtn = q('voiceAddBtn') || q('addVoiceCartBtn') || q('voiceConfirmBtn');
-    if(addBtn) addBtn.disabled = true;
-
-    // Clear common global arrays/state used by voice matching if present.
-    try {
-      window.voiceParsedItems = [];
-      window.voiceResults = [];
-      window.voiceMatchedItems = [];
-      window.currentVoiceItems = [];
-    } catch(e){}
-
-    const modal = q('voiceModal');
-    const scrollTargets = [
-      modal,
-      modal && modal.querySelector('.voice-panel'),
-      modal && modal.querySelector('.voice-modal'),
-      modal && modal.querySelector('.voice-box'),
-      modal && modal.querySelector('.voice-content'),
-      modal && modal.querySelector('.modal-body'),
-      document.querySelector('.voice-modal-body')
-    ].filter(Boolean);
-
-    scrollTargets.forEach(function(el){
-      try {
-        if(typeof el.scrollTo === 'function') el.scrollTo({top:0,left:0,behavior:'auto'});
-        else el.scrollTop = 0;
-      } catch(e){}
-    });
-
-    setTimeout(function(){
-      scrollTargets.forEach(function(el){
-        try {
-          if(typeof el.scrollTo === 'function') el.scrollTo({top:0,left:0,behavior:'auto'});
-          else el.scrollTop = 0;
-        } catch(e){}
-      });
-      resetLock = false;
-    }, 80);
-  }
-
-  function checkVoiceModalOpen(){
-    const modal = q('voiceModal');
-    const visible = isVisible(modal);
-    if(visible && !lastVisible){
-      clearVoiceState();
-    }
-    lastVisible = visible;
-  }
-
-  function install(){
-    const modal = q('voiceModal');
-
-    // Watch modal style/class changes.
-    if(modal && !modal.__v39VoiceObserver){
-      modal.__v39VoiceObserver = true;
-      const obs = new MutationObserver(checkVoiceModalOpen);
-      obs.observe(modal, {attributes:true, attributeFilter:['style','class','open','aria-hidden']});
-    }
-
-    // Also catch voice button clicks before old content is shown.
-    document.addEventListener('click', function(e){
-      const el = e.target && e.target.closest ? e.target.closest('button,a,div,span') : null;
-      if(!el) return;
-      const txt = (el.innerText || el.textContent || '').trim();
-      const meta = ((el.id || '') + ' ' + (el.className || '') + ' ' + (el.getAttribute('onclick') || '')).toLowerCase();
-      if(txt.indexOf('语音') >= 0 || txt.indexOf('音声') >= 0 || meta.indexOf('voice') >= 0){
-        setTimeout(clearVoiceState, 0);
-        setTimeout(function(){
-          lastVisible = false;
-          checkVoiceModalOpen();
-        }, 120);
-      }
-    }, true);
-
-    // Poll lightly for pages where modal is opened without attribute mutation.
-    setInterval(checkVoiceModalOpen, 300);
-  }
-
-  if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', install);
-  } else {
-    install();
-  }
-})();
-</script>
-
 </body>
 </html>
