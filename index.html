@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <!-- V41 clean no leak real reset -->
-<!-- V42 voice order sort and full names -->
+<!-- V43 fixed syntax voice UI -->
 <title>受発注システム / 订货系统 - PRO UI v13</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -878,6 +878,17 @@ body{letter-spacing:.01em;background:#f7f8fa;}
 .voice-help-text{font-size:11px;color:#94a3b8;line-height:1.7;margin-top:6px;}
 @media(max-width:800px){.voice-api-config{grid-template-columns:1fr;}.voice-hold-btn{min-height:62px;font-size:17px;}.voice-result-item{grid-template-columns:1fr 64px 38px;}.voice-delete-btn{width:36px;height:36px;}}
 
+
+/* V43 voice result layout */
+.voice-item-v43{padding:14px 12px!important;display:block!important;}
+.voice-item-v43 .voice-product-row{display:grid!important;grid-template-columns:minmax(0,1fr) 48px;gap:10px;align-items:center;margin-bottom:10px;}
+.voice-item-v43 .voice-product-select{width:100%!important;min-height:48px!important;white-space:normal!important;text-overflow:clip!important;overflow:visible!important;font-size:18px!important;font-weight:700!important;line-height:1.35!important;}
+.voice-item-v43 .voice-remove-btn{width:48px!important;height:48px!important;border-radius:16px!important;border:0!important;background:#f3f6fb!important;color:#64748b!important;font-size:24px!important;font-weight:800!important;}
+.voice-item-v43 .voice-qty-row{display:flex!important;align-items:center!important;gap:10px!important;padding-left:2px;}
+.voice-item-v43 .voice-qty-label{font-size:14px!important;color:#94a3b8!important;font-weight:700!important;}
+.voice-item-v43 .voice-qty-input{width:96px!important;height:48px!important;text-align:center!important;border:1px solid #dbe3ef!important;border-radius:14px!important;font-size:22px!important;font-weight:800!important;}
+.voice-item-v43 .voice-unit{font-size:15px!important;color:#64748b!important;}
+
 </style>
 </head>
 <body>
@@ -1610,18 +1621,7 @@ async function genDeliveryPDF(orderId){
       'h1{font-size:24px;margin:0 0 14px}.meta{margin:8px 0;color:#555}.box{border:1px solid #ddd;border-radius:12px;padding:16px;margin:14px 0}'+
       'table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border-bottom:1px solid #eee;padding:9px;text-align:left}th{background:#f6f7fb}'+
       '.total{text-align:right;font-size:22px;font-weight:800;margin-top:18px}'+
-      '
-/* V42 voice result layout */
-.voice-item-v42{padding:14px 12px!important;display:block!important;}
-.voice-item-v42 .voice-product-row{display:grid!important;grid-template-columns:minmax(0,1fr) 48px;gap:10px;align-items:center;margin-bottom:10px;}
-.voice-item-v42 .voice-product-select{width:100%!important;min-height:48px!important;white-space:normal!important;text-overflow:clip!important;overflow:visible!important;font-size:18px!important;font-weight:700!important;line-height:1.35!important;}
-.voice-item-v42 .voice-remove-btn{width:48px!important;height:48px!important;border-radius:16px!important;border:0!important;background:#f3f6fb!important;color:#64748b!important;font-size:24px!important;font-weight:800!important;}
-.voice-item-v42 .voice-qty-row{display:flex!important;align-items:center!important;gap:10px!important;padding-left:2px;}
-.voice-item-v42 .voice-qty-label{font-size:14px!important;color:#94a3b8!important;font-weight:700!important;}
-.voice-item-v42 .voice-qty-input{width:96px!important;height:48px!important;text-align:center!important;border:1px solid #dbe3ef!important;border-radius:14px!important;font-size:22px!important;font-weight:800!important;}
-.voice-item-v42 .voice-unit{font-size:15px!important;color:#64748b!important;}
-
-</style></head><body>'+
+      '</style></head><body>'+
       '<button class="print-btn" onclick="window.print()">印刷</button>'+
       '<h1>送り状 / 送货单</h1>'+
       '<div class="box">'+
@@ -2639,9 +2639,8 @@ function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;',
         return `<option value="${p.id}" ${String(p.id)===String(selectedId)?'selected':''}>${escapeHtml(title + sub)}</option>`;
       }).join('');
 
-      const rawName = it.raw || it.keyword || it.name || '';
       return `
-        <div class="voice-item voice-item-v42">
+        <div class="voice-item voice-item-v43">
           <div class="voice-product-row">
             <select class="voice-product-select" onchange="updateVoiceItemProduct(${idx},this.value)">
               ${options}
@@ -2678,10 +2677,7 @@ function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;',
     renderVoiceResults(voiceParsedItems);
   }
 
-window.parseVoiceTextFromInput=function(){const el=V$('voiceText');const text=cleanVoiceAsrText(el?.value||'');if(el)el.value=text;renderVoiceResults(parseVoiceText(text));};
-  window.removeVoiceItem=function(i){voiceParsedItems.splice(i,1);renderVoiceResults(voiceParsedItems);};
-  
-  function sortCartByVoiceOrderV42(){
+  function sortCartByVoiceOrderV43(){
     if(!Array.isArray(cart) || !Array.isArray(voiceParsedItems) || !voiceParsedItems.length) return;
     const orderMap = new Map();
     voiceParsedItems.forEach((it,i)=>{
@@ -2690,13 +2686,17 @@ window.parseVoiceTextFromInput=function(){const el=V$('voiceText');const text=cl
     });
     if(!orderMap.size) return;
     cart.sort((a,b)=>{
-      const ai = orderMap.has(String(a.id || a.product_id || a.productId)) ? orderMap.get(String(a.id || a.product_id || a.productId)) : 999999;
-      const bi = orderMap.has(String(b.id || b.product_id || b.productId)) ? orderMap.get(String(b.id || b.product_id || b.productId)) : 999999;
+      const aid = String(a.id || a.product_id || a.productId || '');
+      const bid = String(b.id || b.product_id || b.productId || '');
+      const ai = orderMap.has(aid) ? orderMap.get(aid) : 999999;
+      const bi = orderMap.has(bid) ? orderMap.get(bid) : 999999;
       return ai - bi;
     });
   }
 
-window.addVoiceItemsToCart=function(){const rows=[...document.querySelectorAll('.voice-result-item')];if(!rows.length){alert(vMsg('请先语音识别或解析文字','先に音声認識または文字解析をしてください'));return;}const keepY=window.scrollY||document.documentElement.scrollTop||0;const cart=typeof getCart==='function'?getCart():[];let added=0;rows.forEach(row=>{const sel=row.querySelector('.voice-result-select');const qtyEl=row.querySelector('.voice-qty-input');const pid=sel?.value;const qty=Math.max(1,parseInt(qtyEl?.value||'1',10)||1);const p=(allProducts||[]).find(x=>String(x.id)===String(pid));if(!p)return;const idx=cart.findIndex(c=>String(c.product_id)===String(p.id));if(idx>=0)cart[idx].qty=Number(cart[idx].qty||0)+qty;else cart.push({product_id:p.id,qty,product_name:p.name,product_name_zh:p.name_zh||'',product_spec:p.spec,product_emoji:'',unit_price:p.price,tax_rate:p.tax_rate});added+=qty;});if(!added){alert(vMsg('没有可加入的商品','追加できる商品がありません'));return;}if(typeof setCart==='function')setCart(cart);if(typeof renderProducts==='function')renderProducts();if(typeof renderCart==='function')renderCart({keepOpen:false});if(typeof updateCartBadge==='function')updateCartBadge();/* V41 clear after add voice cart */try{voiceParsedItems=[];}catch(e){}if(V$('voiceText'))V$('voiceText').value='';try{renderVoiceResults([]);}catch(e){}sortCartByVoiceOrderV42();try{renderCart();}catch(e){}closeVoiceOrderModal();requestAnimationFrame(()=>window.scrollTo(0,keepY));alert(vMsg(`已加入购物车：${added}件`,`カートに追加しました：${added}点`));};
+window.parseVoiceTextFromInput=function(){const el=V$('voiceText');const text=cleanVoiceAsrText(el?.value||'');if(el)el.value=text;renderVoiceResults(parseVoiceText(text));};
+  window.removeVoiceItem=function(i){voiceParsedItems.splice(i,1);renderVoiceResults(voiceParsedItems);};
+  window.addVoiceItemsToCart=function(){const rows=[...document.querySelectorAll('.voice-result-item')];if(!rows.length){alert(vMsg('请先语音识别或解析文字','先に音声認識または文字解析をしてください'));return;}const keepY=window.scrollY||document.documentElement.scrollTop||0;const cart=typeof getCart==='function'?getCart():[];let added=0;rows.forEach(row=>{const sel=row.querySelector('.voice-result-select');const qtyEl=row.querySelector('.voice-qty-input');const pid=sel?.value;const qty=Math.max(1,parseInt(qtyEl?.value||'1',10)||1);const p=(allProducts||[]).find(x=>String(x.id)===String(pid));if(!p)return;const idx=cart.findIndex(c=>String(c.product_id)===String(p.id));if(idx>=0)cart[idx].qty=Number(cart[idx].qty||0)+qty;else cart.push({product_id:p.id,qty,product_name:p.name,product_name_zh:p.name_zh||'',product_spec:p.spec,product_emoji:'',unit_price:p.price,tax_rate:p.tax_rate});added+=qty;});if(!added){alert(vMsg('没有可加入的商品','追加できる商品がありません'));return;}if(typeof setCart==='function')setCart(cart);if(typeof renderProducts==='function')renderProducts();if(typeof renderCart==='function')renderCart({keepOpen:false});if(typeof updateCartBadge==='function')updateCartBadge();/* V41 clear after add voice cart */try{voiceParsedItems=[];}catch(e){}if(V$('voiceText'))V$('voiceText').value='';try{renderVoiceResults([]);}catch(e){}sortCartByVoiceOrderV43();try{renderCart();}catch(e){}closeVoiceOrderModal();requestAnimationFrame(()=>window.scrollTo(0,keepY));alert(vMsg(`已加入购物车：${added}件`,`カートに追加しました：${added}点`));};
   window.addEventListener('load',()=>setTimeout(bindHoldButton,500));
 })();
 
