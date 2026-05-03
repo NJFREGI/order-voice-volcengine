@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <!-- V38 fixed voice modal reset, no code leak -->
+<!-- V39 voice modal force reset -->
 <title>受発注システム / 订货系统 - PRO UI v13</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1754,6 +1755,130 @@ async function genDeliveryPDF(orderId){const{data:order}=await sb.from('orders')
   else installOpenTapPriceFix();
 })();
 <\/script>
+
+<script>
+/* V39: force clear voice modal every time it opens */
+(function(){
+  let lastVisible = false;
+  let resetLock = false;
+
+  function q(id){ return document.getElementById(id); }
+
+  function isVisible(el){
+    if(!el) return false;
+    const st = window.getComputedStyle(el);
+    return st.display !== 'none' && st.visibility !== 'hidden' && st.opacity !== '0' && el.offsetWidth > 0 && el.offsetHeight > 0;
+  }
+
+  function clearVoiceState(){
+    if(resetLock) return;
+    resetLock = true;
+
+    const textIds = ['voiceText','voiceInput','voiceTextarea'];
+    textIds.forEach(function(id){
+      const el = q(id);
+      if(el) el.value = '';
+    });
+
+    const status = q('voiceStatus');
+    if(status){
+      status.textContent = '';
+      status.innerHTML = '';
+      status.className = status.className || 'voice-status';
+    }
+
+    const resultIds = ['voiceResults','voiceResult','voiceList','voiceItems','voiceMatchedList'];
+    resultIds.forEach(function(id){
+      const el = q(id);
+      if(el) el.innerHTML = '';
+    });
+
+    const addBtn = q('voiceAddBtn') || q('addVoiceCartBtn') || q('voiceConfirmBtn');
+    if(addBtn) addBtn.disabled = true;
+
+    // Clear common global arrays/state used by voice matching if present.
+    try {
+      window.voiceParsedItems = [];
+      window.voiceResults = [];
+      window.voiceMatchedItems = [];
+      window.currentVoiceItems = [];
+    } catch(e){}
+
+    const modal = q('voiceModal');
+    const scrollTargets = [
+      modal,
+      modal && modal.querySelector('.voice-panel'),
+      modal && modal.querySelector('.voice-modal'),
+      modal && modal.querySelector('.voice-box'),
+      modal && modal.querySelector('.voice-content'),
+      modal && modal.querySelector('.modal-body'),
+      document.querySelector('.voice-modal-body')
+    ].filter(Boolean);
+
+    scrollTargets.forEach(function(el){
+      try {
+        if(typeof el.scrollTo === 'function') el.scrollTo({top:0,left:0,behavior:'auto'});
+        else el.scrollTop = 0;
+      } catch(e){}
+    });
+
+    setTimeout(function(){
+      scrollTargets.forEach(function(el){
+        try {
+          if(typeof el.scrollTo === 'function') el.scrollTo({top:0,left:0,behavior:'auto'});
+          else el.scrollTop = 0;
+        } catch(e){}
+      });
+      resetLock = false;
+    }, 80);
+  }
+
+  function checkVoiceModalOpen(){
+    const modal = q('voiceModal');
+    const visible = isVisible(modal);
+    if(visible && !lastVisible){
+      clearVoiceState();
+    }
+    lastVisible = visible;
+  }
+
+  function install(){
+    const modal = q('voiceModal');
+
+    // Watch modal style/class changes.
+    if(modal && !modal.__v39VoiceObserver){
+      modal.__v39VoiceObserver = true;
+      const obs = new MutationObserver(checkVoiceModalOpen);
+      obs.observe(modal, {attributes:true, attributeFilter:['style','class','open','aria-hidden']});
+    }
+
+    // Also catch voice button clicks before old content is shown.
+    document.addEventListener('click', function(e){
+      const el = e.target && e.target.closest ? e.target.closest('button,a,div,span') : null;
+      if(!el) return;
+      const txt = (el.innerText || el.textContent || '').trim();
+      const meta = ((el.id || '') + ' ' + (el.className || '') + ' ' + (el.getAttribute('onclick') || '')).toLowerCase();
+      if(txt.indexOf('语音') >= 0 || txt.indexOf('音声') >= 0 || meta.indexOf('voice') >= 0){
+        setTimeout(clearVoiceState, 0);
+        setTimeout(function(){
+          lastVisible = false;
+          checkVoiceModalOpen();
+        }, 120);
+      }
+    }, true);
+
+    // Poll lightly for pages where modal is opened without attribute mutation.
+    setInterval(checkVoiceModalOpen, 300);
+  }
+
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', install);
+  } else {
+    install();
+  }
+})();
+</script>
+
 </body></html>`;const w=window.open('','_blank','width=920,height=720,scrollbars=yes');if(!w){alert('ポップアップをブロックされています。');return;}w.document.write(html);w.document.close();}
 
 async function generateInvoicePDF(){const month=document.getElementById('invoiceMonth').value;const shopId=document.getElementById('invoiceShopSel').value;if(!month){alert(currentLang==='zh'?'请选择月份':'月を選択してください');return;}showLoading(currentLang==='zh'?'生成PDF...':'PDF生成中...');let query=sb.from('orders').select('*, order_items(*)').gte('order_date',month+'-01').lte('order_date',month+'-31').eq('receipt_confirmed',true);if(shopId)query=query.eq('shop_id',shopId);const{data:orders}=await query.order('order_date');hideLoading();if(!orders||!orders.length){alert(currentLang==='zh'?'没有已确认的订单':'確認済み注文がありません');return;}const{jsPDF}=window.jspdf;const doc=new jsPDF({unit:'mm',format:'a4'});const shops=[...new Set(orders.map(o=>o.shop_id))];let first=true;shops.forEach(sid=>{const shopOrders=orders.filter(o=>o.shop_id===sid);if(!shopOrders.length)return;if(!first)doc.addPage();first=false;const shopName=shopOrders[0].shop_name;const totalAmt=shopOrders.reduce((a,o)=>a+(o.total||0),0);const taxAmt=shopOrders.reduce((a,o)=>a+(o.tax_total||0),0);const shopDisplayInv=pdfShopNameWithId(shopName,shopOrders[0]?.shop_id);doc.setFontSize(20);doc.setFont('helvetica','bold');doc.text('INVOICE',105,18,{align:'center'});doc.setDrawColor(37,99,235);doc.setLineWidth(0.8);doc.line(20,22,190,22);doc.setFontSize(10);doc.setFont('helvetica','normal');doc.text(`To: ${shopDisplayInv}`,20,30);doc.text(`Period: ${month}`,20,37);doc.text(`Orders: ${shopOrders.length}`,20,44);doc.text(`Issued: ${new Date().toLocaleDateString('ja-JP')}`,130,30);doc.line(20,50,190,50);let y=58;doc.setFont('helvetica','bold');doc.setFontSize(9);doc.text('Date',20,y);doc.text('Order#',50,y);doc.text('Items',85,y);doc.text('Subtotal',115,y,{align:'right'});doc.text('Tax',140,y,{align:'right'});doc.text('Total',175,y,{align:'right'});doc.line(20,y+2,190,y+2);y+=9;doc.setFont('helvetica','normal');shopOrders.forEach(o=>{doc.text(o.order_date,20,y);doc.text('#'+o.order_no,50,y);doc.text(String(o.order_items?.length||''),85,y);doc.text('Y'+(o.subtotal||0).toLocaleString(),115,y,{align:'right'});doc.text('Y'+(o.tax_total||0).toLocaleString(),140,y,{align:'right'});doc.text('Y'+(o.total||0).toLocaleString(),175,y,{align:'right'});y+=8;});doc.line(20,y,190,y);y+=8;doc.setFont('helvetica','bold');doc.setFontSize(11);doc.text('GRAND TOTAL (incl. tax):',80,y);doc.text('Y'+Math.round(totalAmt).toLocaleString(),175,y,{align:'right'});});doc.save(`invoice_${month}${shopId?'_'+shopId:''}.pdf`);}
@@ -2784,5 +2909,129 @@ function parseVoiceText(text){
 })();
 
 </script>
+
+<script>
+/* V39: force clear voice modal every time it opens */
+(function(){
+  let lastVisible = false;
+  let resetLock = false;
+
+  function q(id){ return document.getElementById(id); }
+
+  function isVisible(el){
+    if(!el) return false;
+    const st = window.getComputedStyle(el);
+    return st.display !== 'none' && st.visibility !== 'hidden' && st.opacity !== '0' && el.offsetWidth > 0 && el.offsetHeight > 0;
+  }
+
+  function clearVoiceState(){
+    if(resetLock) return;
+    resetLock = true;
+
+    const textIds = ['voiceText','voiceInput','voiceTextarea'];
+    textIds.forEach(function(id){
+      const el = q(id);
+      if(el) el.value = '';
+    });
+
+    const status = q('voiceStatus');
+    if(status){
+      status.textContent = '';
+      status.innerHTML = '';
+      status.className = status.className || 'voice-status';
+    }
+
+    const resultIds = ['voiceResults','voiceResult','voiceList','voiceItems','voiceMatchedList'];
+    resultIds.forEach(function(id){
+      const el = q(id);
+      if(el) el.innerHTML = '';
+    });
+
+    const addBtn = q('voiceAddBtn') || q('addVoiceCartBtn') || q('voiceConfirmBtn');
+    if(addBtn) addBtn.disabled = true;
+
+    // Clear common global arrays/state used by voice matching if present.
+    try {
+      window.voiceParsedItems = [];
+      window.voiceResults = [];
+      window.voiceMatchedItems = [];
+      window.currentVoiceItems = [];
+    } catch(e){}
+
+    const modal = q('voiceModal');
+    const scrollTargets = [
+      modal,
+      modal && modal.querySelector('.voice-panel'),
+      modal && modal.querySelector('.voice-modal'),
+      modal && modal.querySelector('.voice-box'),
+      modal && modal.querySelector('.voice-content'),
+      modal && modal.querySelector('.modal-body'),
+      document.querySelector('.voice-modal-body')
+    ].filter(Boolean);
+
+    scrollTargets.forEach(function(el){
+      try {
+        if(typeof el.scrollTo === 'function') el.scrollTo({top:0,left:0,behavior:'auto'});
+        else el.scrollTop = 0;
+      } catch(e){}
+    });
+
+    setTimeout(function(){
+      scrollTargets.forEach(function(el){
+        try {
+          if(typeof el.scrollTo === 'function') el.scrollTo({top:0,left:0,behavior:'auto'});
+          else el.scrollTop = 0;
+        } catch(e){}
+      });
+      resetLock = false;
+    }, 80);
+  }
+
+  function checkVoiceModalOpen(){
+    const modal = q('voiceModal');
+    const visible = isVisible(modal);
+    if(visible && !lastVisible){
+      clearVoiceState();
+    }
+    lastVisible = visible;
+  }
+
+  function install(){
+    const modal = q('voiceModal');
+
+    // Watch modal style/class changes.
+    if(modal && !modal.__v39VoiceObserver){
+      modal.__v39VoiceObserver = true;
+      const obs = new MutationObserver(checkVoiceModalOpen);
+      obs.observe(modal, {attributes:true, attributeFilter:['style','class','open','aria-hidden']});
+    }
+
+    // Also catch voice button clicks before old content is shown.
+    document.addEventListener('click', function(e){
+      const el = e.target && e.target.closest ? e.target.closest('button,a,div,span') : null;
+      if(!el) return;
+      const txt = (el.innerText || el.textContent || '').trim();
+      const meta = ((el.id || '') + ' ' + (el.className || '') + ' ' + (el.getAttribute('onclick') || '')).toLowerCase();
+      if(txt.indexOf('语音') >= 0 || txt.indexOf('音声') >= 0 || meta.indexOf('voice') >= 0){
+        setTimeout(clearVoiceState, 0);
+        setTimeout(function(){
+          lastVisible = false;
+          checkVoiceModalOpen();
+        }, 120);
+      }
+    }, true);
+
+    // Poll lightly for pages where modal is opened without attribute mutation.
+    setInterval(checkVoiceModalOpen, 300);
+  }
+
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', install);
+  } else {
+    install();
+  }
+})();
+</script>
+
 </body>
 </html>
