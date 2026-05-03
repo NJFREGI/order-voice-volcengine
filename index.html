@@ -1753,6 +1753,52 @@ async function genDeliveryPDF(orderId){const{data:order}=await sb.from('orders')
   else installOpenTapPriceFix();
 })();
 <\/script>
+
+<script>
+/* V37 fallback: reset voice modal whenever voice order button is clicked/opened */
+(function(){
+  function bindVoiceResetFallback(){
+    document.addEventListener('click', function(e){
+      const target = e.target && e.target.closest ? e.target.closest('button,a,div') : null;
+      if(!target) return;
+      const txt = (target.innerText || target.textContent || '').trim();
+      const idc = ((target.id || '') + ' ' + (target.className || '')).toLowerCase();
+      if(txt.includes('语音') || txt.includes('音声') || idc.includes('voice')){
+        if(typeof resetVoiceModalState === 'function'){
+          setTimeout(resetVoiceModalState, 0);
+          setTimeout(resetVoiceModalState, 80);
+        }
+      }
+    }, true);
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindVoiceResetFallback);
+  else bindVoiceResetFallback();
+})();
+</script>
+
+
+<script>
+/* V37: reset when voice modal display changes to visible */
+(function(){
+  function installVoiceModalObserver(){
+    const modal = document.getElementById('voiceModal');
+    if(!modal || modal.__v37Observed) return;
+    modal.__v37Observed = true;
+    const obs = new MutationObserver(() => {
+      const visible = modal.offsetParent !== null || getComputedStyle(modal).display !== 'none';
+      if(visible && !modal.__v37JustReset){
+        modal.__v37JustReset = true;
+        if(typeof resetVoiceModalState === 'function') resetVoiceModalState();
+        setTimeout(() => { modal.__v37JustReset = false; }, 500);
+      }
+    });
+    obs.observe(modal, { attributes: true, attributeFilter: ['style','class'] });
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installVoiceModalObserver);
+  else installVoiceModalObserver();
+})();
+</script>
+
 </body></html>`;const w=window.open('','_blank','width=920,height=720,scrollbars=yes');if(!w){alert('ポップアップをブロックされています。');return;}w.document.write(html);w.document.close();}
 
 async function generateInvoicePDF(){const month=document.getElementById('invoiceMonth').value;const shopId=document.getElementById('invoiceShopSel').value;if(!month){alert(currentLang==='zh'?'请选择月份':'月を選択してください');return;}showLoading(currentLang==='zh'?'生成PDF...':'PDF生成中...');let query=sb.from('orders').select('*, order_items(*)').gte('order_date',month+'-01').lte('order_date',month+'-31').eq('receipt_confirmed',true);if(shopId)query=query.eq('shop_id',shopId);const{data:orders}=await query.order('order_date');hideLoading();if(!orders||!orders.length){alert(currentLang==='zh'?'没有已确认的订单':'確認済み注文がありません');return;}const{jsPDF}=window.jspdf;const doc=new jsPDF({unit:'mm',format:'a4'});const shops=[...new Set(orders.map(o=>o.shop_id))];let first=true;shops.forEach(sid=>{const shopOrders=orders.filter(o=>o.shop_id===sid);if(!shopOrders.length)return;if(!first)doc.addPage();first=false;const shopName=shopOrders[0].shop_name;const totalAmt=shopOrders.reduce((a,o)=>a+(o.total||0),0);const taxAmt=shopOrders.reduce((a,o)=>a+(o.tax_total||0),0);const shopDisplayInv=pdfShopNameWithId(shopName,shopOrders[0]?.shop_id);doc.setFontSize(20);doc.setFont('helvetica','bold');doc.text('INVOICE',105,18,{align:'center'});doc.setDrawColor(37,99,235);doc.setLineWidth(0.8);doc.line(20,22,190,22);doc.setFontSize(10);doc.setFont('helvetica','normal');doc.text(`To: ${shopDisplayInv}`,20,30);doc.text(`Period: ${month}`,20,37);doc.text(`Orders: ${shopOrders.length}`,20,44);doc.text(`Issued: ${new Date().toLocaleDateString('ja-JP')}`,130,30);doc.line(20,50,190,50);let y=58;doc.setFont('helvetica','bold');doc.setFontSize(9);doc.text('Date',20,y);doc.text('Order#',50,y);doc.text('Items',85,y);doc.text('Subtotal',115,y,{align:'right'});doc.text('Tax',140,y,{align:'right'});doc.text('Total',175,y,{align:'right'});doc.line(20,y+2,190,y+2);y+=9;doc.setFont('helvetica','normal');shopOrders.forEach(o=>{doc.text(o.order_date,20,y);doc.text('#'+o.order_no,50,y);doc.text(String(o.order_items?.length||''),85,y);doc.text('Y'+(o.subtotal||0).toLocaleString(),115,y,{align:'right'});doc.text('Y'+(o.tax_total||0).toLocaleString(),140,y,{align:'right'});doc.text('Y'+(o.total||0).toLocaleString(),175,y,{align:'right'});y+=8;});doc.line(20,y,190,y);y+=8;doc.setFont('helvetica','bold');doc.setFontSize(11);doc.text('GRAND TOTAL (incl. tax):',80,y);doc.text('Y'+Math.round(totalAmt).toLocaleString(),175,y,{align:'right'});});doc.save(`invoice_${month}${shopId?'_'+shopId:''}.pdf`);}
@@ -2695,7 +2741,53 @@ document.addEventListener('focusin',function(e){
 
   function findCandidates(raw){const text=vNorm(raw);const scored=[];(allProducts||[]).forEach(p=>{if(!p.active||Number(p.stock)<=0)return;let score=0;for(const a of productAliases(p)){const na=vNorm(a);if(!na)continue;if(text.includes(na))score=Math.max(score,100+na.length);else if(na.includes(text)&&text.length>=2)score=Math.max(score,70+text.length);}if(score>0)scored.push({product:p,score});});scored.sort((a,b)=>b.score-a.score);return scored.slice(0,6).map(x=>x.product);}
 
-  function parseVoiceText(text){
+  
+  // V37: 每次打开语音订货时，清空上一次识别内容并把弹窗滚动回顶部
+  function resetVoiceModalState(){
+    const textEl = V$('voiceText');
+    if(textEl) textEl.value = '';
+
+    const statusEl = V$('voiceStatus');
+    if(statusEl) {
+      statusEl.textContent = '';
+      statusEl.className = 'voice-status';
+      statusEl.style.display = '';
+    }
+
+    const resultsEl = V$('voiceResults');
+    if(resultsEl) {
+      resultsEl.innerHTML = '';
+      resultsEl.style.display = '';
+    }
+
+    const listEl = V$('voiceList');
+    if(listEl) {
+      listEl.innerHTML = '';
+      listEl.style.display = '';
+    }
+
+    const addBtn = V$('voiceAddBtn');
+    if(addBtn) addBtn.disabled = true;
+
+    const modalBody = document.querySelector('.voice-modal-body,.voice-body,.voice-content,#voiceModal .modal-body,#voiceModal .panel-body,#voiceModal');
+    if(modalBody && typeof modalBody.scrollTo === 'function') {
+      modalBody.scrollTo({ top: 0, behavior: 'auto' });
+    }
+
+    const modal = V$('voiceModal');
+    if(modal && typeof modal.scrollTo === 'function') {
+      modal.scrollTo({ top: 0, behavior: 'auto' });
+    }
+
+    setTimeout(() => {
+      const againBody = document.querySelector('.voice-modal-body,.voice-body,.voice-content,#voiceModal .modal-body,#voiceModal .panel-body,#voiceModal');
+      if(againBody && typeof againBody.scrollTo === 'function') againBody.scrollTo({ top: 0, behavior: 'auto' });
+      window.scrollTo({ top: window.scrollY, behavior: 'auto' });
+    }, 30);
+  }
+
+
+function parseVoiceText(text){
     text=cleanVoiceAsrText(text);
     if(!text)return [];
     const results=[];
@@ -2754,5 +2846,51 @@ document.addEventListener('focusin',function(e){
 })();
 
 </script>
+
+<script>
+/* V37 fallback: reset voice modal whenever voice order button is clicked/opened */
+(function(){
+  function bindVoiceResetFallback(){
+    document.addEventListener('click', function(e){
+      const target = e.target && e.target.closest ? e.target.closest('button,a,div') : null;
+      if(!target) return;
+      const txt = (target.innerText || target.textContent || '').trim();
+      const idc = ((target.id || '') + ' ' + (target.className || '')).toLowerCase();
+      if(txt.includes('语音') || txt.includes('音声') || idc.includes('voice')){
+        if(typeof resetVoiceModalState === 'function'){
+          setTimeout(resetVoiceModalState, 0);
+          setTimeout(resetVoiceModalState, 80);
+        }
+      }
+    }, true);
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindVoiceResetFallback);
+  else bindVoiceResetFallback();
+})();
+</script>
+
+
+<script>
+/* V37: reset when voice modal display changes to visible */
+(function(){
+  function installVoiceModalObserver(){
+    const modal = document.getElementById('voiceModal');
+    if(!modal || modal.__v37Observed) return;
+    modal.__v37Observed = true;
+    const obs = new MutationObserver(() => {
+      const visible = modal.offsetParent !== null || getComputedStyle(modal).display !== 'none';
+      if(visible && !modal.__v37JustReset){
+        modal.__v37JustReset = true;
+        if(typeof resetVoiceModalState === 'function') resetVoiceModalState();
+        setTimeout(() => { modal.__v37JustReset = false; }, 500);
+      }
+    });
+    obs.observe(modal, { attributes: true, attributeFilter: ['style','class'] });
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installVoiceModalObserver);
+  else installVoiceModalObserver();
+})();
+</script>
+
 </body>
 </html>
